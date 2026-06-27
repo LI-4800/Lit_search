@@ -1,0 +1,127 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ring2"
+version = "0.0.1"
+description = "RING2 — Shared-Core literature search & appraisal tool for medical-device regulatory submissions (MEDDEV 2.7/1 Rev. 4, MDR, EU 722/2012)"
+readme = "README.md"
+requires-python = ">=3.14"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Michael Hug", email = "michael.hug@lets-innovate.ch" },
+]
+keywords = [
+  "medical-device", "regulatory", "literature-search",
+  "MEDDEV", "MDR", "PRISMA", "PubMed", "clinical-evaluation",
+]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Healthcare Industry",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+
+dependencies = [
+  "ruamel.yaml>=0.18",      # comment-preserving YAML roundtrip (required for audit-trail YAMLs)
+  "pydantic>=2.9",          # typed schemas for MPCO/PICO
+  "flask>=3.0",             # UI layer (per architecture v1)
+  "click>=8.1",             # CLI
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "pre-commit>=4.0",
+]
+
+[project.scripts]
+ring2 = "ring2.cli.main:cli"
+
+[project.urls]
+Homepage = "https://github.com/LI-4800/Lit_search"
+Repository = "https://github.com/LI-4800/Lit_search"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ring2"]
+
+# -------------------------------------------------------------------------
+# Ruff (lint + format)
+# -------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",     # pycodestyle
+  "F",          # pyflakes
+  "I",          # isort
+  "N",          # pep8-naming
+  "UP",         # pyupgrade
+  "B",          # flake8-bugbear
+  "C4",         # flake8-comprehensions
+  "SIM",        # flake8-simplify
+  "RUF",        # ruff-specific
+]
+ignore = [
+  "E501",       # line length handled by formatter
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# -------------------------------------------------------------------------
+# Mypy
+# -------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["ruamel.*"]
+ignore_missing_imports = true
+
+# -------------------------------------------------------------------------
+# Pytest
+# -------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+  "-ra",
+  "--strict-markers",
+  "--strict-config",
+]
+markers = [
+  "integration: integration tests touching MCP servers (skip in CI without secrets)",
+  "slow: slow tests",
+]
+
+[tool.coverage.run]
+source = ["src/ring2"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]

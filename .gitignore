@@ -1,0 +1,52 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.installed.cfg
+MANIFEST
+
+# --- venv ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- testing & coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+
+# --- IDE ---
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# --- project-specific ---
+# Session state directories (per-project searches) — never commit search results
+sessions/
+output/
+*.bundle
+
+# Working copies of regulatory source documents (originals live elsewhere)
+data/raw/
+
+# Logs
+*.log
+logs/
+
+# Environment files
+.env
+.env.local
