@@ -30,6 +30,8 @@ heavier libraries (e.g. ``pydantic``) for their concrete schemas, but the
 core abstraction stays import-cheap.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum

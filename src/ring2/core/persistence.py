@@ -28,6 +28,8 @@ This module uses ``ruamel.yaml`` (not PyYAML) because PyYAML strips
 comments on round-trip. Audit-trail YAMLs require comment preservation.
 """
 
+from __future__ import annotations
+
 import json
 from io import StringIO
 from pathlib import Path
