@@ -391,6 +391,7 @@ def test_renderer_performs_no_io(tmp_path: Path) -> None:
 
 from datetime import UTC, datetime  # noqa: E402
 
+from ring2.adapters.mpco.claim_type_classifier import ClaimType  # noqa: E402
 from ring2.adapters.mpco.decision_persistence import ScreeningDecision  # noqa: E402
 from ring2.adapters.mpco.exclusion_codes import ExclusionCode, PrismaPhase  # noqa: E402
 from ring2.adapters.mpco.render_context import MPCORenderContext  # noqa: E402
@@ -410,6 +411,7 @@ _UTC_NOW = datetime(2026, 6, 27, 14, 23, 0, tzinfo=UTC)
 def _ctx(
     claim_id: str = "CB-bov-01",
     applicable_regulation: str = "722_2012",
+    claim_type: ClaimType = ClaimType.UNKNOWN,
     decisions: tuple[ScreeningDecision, ...] = (),
     excluded_screening: dict[str, int] | None = None,
     excluded_eligibility: dict[str, int] | None = None,
@@ -428,6 +430,7 @@ def _ctx(
         comparator=Comparator(description="Porcine-derived collagen"),
         outcome=Outcome(description="Inflammatory response"),
         applicable_regulation=applicable_regulation,  # type: ignore[arg-type]
+        claim_type=claim_type,
     )
     counts = PrismaPhaseCounts(
         identified_database=100,
@@ -493,17 +496,119 @@ def test_context_given_section_2_non_722_emits_not_applicable(tmp_path: Path) ->
 
 
 # ---------------------------------------------------------------------------
-# §3 / §4 remain PENDING under the revised reason
+# §3 Inclusion criteria — filled when context given
 # ---------------------------------------------------------------------------
 
 
-def test_context_given_section_3_4_still_pending_with_new_reason(tmp_path: Path) -> None:
-    """§3 / §4 stay PENDING under 'criteria-factory extraction deferred' when context given."""
+def test_context_given_section_3_renders_universal_baseline(tmp_path: Path) -> None:
+    """§3 always includes the universal `INC-001` baseline, regardless of regulation."""
+    # claim_type=UNKNOWN means elements_in_scope is empty even under 722/2012,
+    # so the only inclusion criterion is the baseline.
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx(claim_type=ClaimType.UNKNOWN))
+    assert artefact.content is not None
+    c = artefact.content
+    assert "## §3 Inclusion criteria" in c
+    assert "Total: 1 criterion(a)." in c
+    assert "`INC-001` — Evidence is relevant to the MPCO claim under appraisal." in c
+
+
+def test_context_given_section_3_renders_annex_i_criteria_for_722_claim(tmp_path: Path) -> None:
+    """§3 emits Annex-I criteria when applicable_regulation is 722_2012 + in-scope claim_type."""
+    ctx = _ctx(applicable_regulation="722_2012", claim_type=ClaimType.SAFETY_ALLERGENICITY)
+    artefact = render_mpco_report(_state(tmp_path), context=ctx)
+    assert artefact.content is not None
+    c = artefact.content
+    assert "## §3 Inclusion criteria" in c
+    # SAFETY_ALLERGENICITY has 2 Annex-I elements in scope (geographic-origin,
+    # tse-risk-assessment), so total = 1 baseline + 2 Annex-I = 3.
+    assert "Total: 3 criterion(a)." in c
+    assert "`INC-001`" in c
+    assert "`INC-722-GEOGRAPHIC-ORIGIN` — Evidence addresses geographic origin" in c
+    assert "`INC-722-TSE-RISK-ASSESSMENT` — Evidence addresses TSE risk assessment" in c
+    # Verbatim regulatory anchor on each Annex-I criterion.
+    assert "per Regulation (EU) No 722/2012, Annex I." in c
+
+
+def test_context_given_section_3_non_722_only_baseline(tmp_path: Path) -> None:
+    """§3 for non-722 claim: only the baseline (no Annex-I machinery)."""
+    artefact = render_mpco_report(
+        _state(tmp_path),
+        context=_ctx(applicable_regulation="none", claim_type=ClaimType.SAFETY_ALLERGENICITY),
+    )
+    assert artefact.content is not None
+    c = artefact.content
+    assert "## §3 Inclusion criteria" in c
+    assert "Total: 1 criterion(a)." in c
+    assert "`INC-001`" in c
+    assert "INC-722-" not in c
+
+
+# ---------------------------------------------------------------------------
+# §4 Exclusion criteria — filled, grouped by PRISMA phase
+# ---------------------------------------------------------------------------
+
+
+def test_context_given_section_4_renders_all_five_codes(tmp_path: Path) -> None:
+    """§4 emits all 5 exclusion codes with their verbatim descriptions."""
     artefact = render_mpco_report(_state(tmp_path), context=_ctx())
     assert artefact.content is not None
-    assert "## §3 Inclusion criteria" in artefact.content
-    assert "## §4 Exclusion criteria" in artefact.content
-    assert "criteria-factory extraction deferred" in artefact.content
+    c = artefact.content
+    assert "## §4 Exclusion criteria" in c
+    # All five canonical code strings appear in the section.
+    for code in ExclusionCode:
+        assert f"`{code.value}`" in c
+
+
+def test_context_given_section_4_grouped_by_prisma_phase(tmp_path: Path) -> None:
+    """§4 groups exclusion criteria by PRISMA phase in declaration order."""
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx())
+    assert artefact.content is not None
+    c = artefact.content
+    # Three phase headers must be present.
+    assert "**Deduplication phase**:" in c
+    assert "**Screening phase**:" in c
+    assert "**Eligibility phase**:" in c
+    # Phases appear in PrismaPhase declaration order.
+    idx_dedup = c.index("**Deduplication phase**:")
+    idx_screen = c.index("**Screening phase**:")
+    idx_elig = c.index("**Eligibility phase**:")
+    assert idx_dedup < idx_screen < idx_elig
+    # Spot-check: EX-DUPLICATE lives under the deduplication phase header,
+    # not under another. Slice from "Deduplication phase" up to "Screening
+    # phase" and assert EX-DUPLICATE is in that window.
+    dedup_section = c[idx_dedup:idx_screen]
+    assert "`EX-DUPLICATE`" in dedup_section
+    screening_section = c[idx_screen:idx_elig]
+    assert "`EX-LANGUAGE`" in screening_section
+    assert "`EX-IRRELEVANT`" in screening_section
+    # Eligibility section continues to end of §4 — check both eligibility codes there.
+    eligibility_section = c[idx_elig:]
+    assert "`EX-NO-FULLTEXT`" in eligibility_section
+    assert "`EX-A6-CATALOG`" in eligibility_section
+
+
+# ---------------------------------------------------------------------------
+# §3 / §4 no-longer-PENDING regression
+# ---------------------------------------------------------------------------
+
+
+def test_context_given_section_3_4_no_longer_pending(tmp_path: Path) -> None:
+    """After Inkrement 5b, §3 / §4 are no longer PENDING when a context is given.
+
+    Regression guard: the old "criteria-factory extraction deferred" reason
+    must not appear when the context is provided.
+    """
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx())
+    assert artefact.content is not None
+    c = artefact.content
+    assert "criteria-factory extraction deferred" not in c
+    # And neither §3 nor §4 emits a "_Pending — …_" line when context is given.
+    # Slice out the §3 and §4 sections and confirm they contain no pending marker.
+    idx_3 = c.index("## §3 Inclusion criteria")
+    idx_4 = c.index("## §4 Exclusion criteria")
+    idx_5 = c.index("## §5 PRISMA flow")
+    assert "_Pending —" not in c[idx_3:idx_4]
+    assert "_Pending —" not in c[idx_4:idx_5]
 
 
 # ---------------------------------------------------------------------------

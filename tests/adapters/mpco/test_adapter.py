@@ -478,7 +478,8 @@ def test_render_report_passes_context_through_to_renderer(tmp_path: Any) -> None
     assert artefact.content is not None
     # Effect: §2 is now filled (would be PENDING-claim if context dropped).
     assert "_Pending — requires claim pass-through._" not in artefact.content
-    # And the §2 'criteria-factory' reason for §3/§4 is the Inkrement-4
-    # marker that only appears on the context path — its presence proves
-    # the context reached the renderer.
-    assert "criteria-factory extraction deferred" in artefact.content
+    # And §3 is now filled with the universal INC-001 baseline (only emitted
+    # on the context path) — its presence proves the context reached the
+    # renderer. Per Stufe-1.8 Inkrement 5b, §3/§4 are no longer PENDING.
+    assert "## §3 Inclusion criteria" in artefact.content
+    assert "`INC-001`" in artefact.content

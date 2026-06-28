@@ -40,8 +40,8 @@ Section layout (forward-compatible with Stufe 1.8+):
     §0  Status banner + intro
     §1  Session
     §2  Regulatory anchors                 [filled if context given]
-    §3  Inclusion criteria                 [PENDING — adapter-method extraction needed]
-    §4  Exclusion criteria                 [PENDING — adapter-method extraction needed]
+    §3  Inclusion criteria                 [filled if context given]
+    §4  Exclusion criteria                 [filled if context given]
     §5  PRISMA flow                        [filled if context given]
     §6  Records passed screening           [filled if context given]
     §7  Excluded records                   [filled if context given]
@@ -62,7 +62,11 @@ from datetime import UTC, datetime
 from importlib import metadata
 from typing import TYPE_CHECKING
 
-from ring2.adapters.mpco.exclusion_codes import PrismaPhase
+from ring2.adapters.mpco.criteria_factory import (
+    make_exclusion_criteria,
+    make_inclusion_criteria,
+)
+from ring2.adapters.mpco.exclusion_codes import ExclusionCode, PrismaPhase, phase_for
 from ring2.adapters.mpco.reg_722_2012 import elements_in_scope, regulatory_anchors
 from ring2.core.adapter_base import ReportArtefact
 
@@ -98,11 +102,10 @@ _INTRO: str = (
 #: verbatim reason shown to the report reader, so the reader understands
 #: *why* the section is empty without consulting the handoff documents.
 #:
-#: After Stufe-1.8 Inkrement 4, §2 / §5 / §6 / §7 are filled when an
-#: MPCORenderContext is provided; only the four sections below remain
-#: pending. §3 / §4 await an adapter-method-to-pure-function extraction
-#: (out of scope for the renderer); §8 / §9 await the appraisal modules
-#: introduced in later increments.
+#: After Stufe-1.8 Inkrement 5b, §2 / §3 / §4 / §5 / §6 / §7 are all
+#: filled when an MPCORenderContext is provided; only §8 / §9 remain
+#: pending (awaiting the appraisal modules introduced in later
+#: increments).
 _PENDING_SECTIONS_NO_CONTEXT: tuple[tuple[int, str, str], ...] = (
     (2, "Regulatory anchors", "requires claim pass-through"),
     (3, "Inclusion criteria", "requires claim pass-through"),
@@ -118,10 +121,8 @@ _PENDING_SECTIONS_NO_CONTEXT: tuple[tuple[int, str, str], ...] = (
     (9, "Evidence synthesis", "requires Stufe 1.8+ synthesis"),
 )
 
-#: Pending sections when a context IS provided. §3 / §4 / §8 / §9 only.
+#: Pending sections when a context IS provided. §8 / §9 only.
 _PENDING_SECTIONS_WITH_CONTEXT: tuple[tuple[int, str, str], ...] = (
-    (3, "Inclusion criteria", "criteria-factory extraction deferred to later Stufe-1.8 increment"),
-    (4, "Exclusion criteria", "criteria-factory extraction deferred to later Stufe-1.8 increment"),
     (8, "Appraisal log", "requires Stufe 1.8+ appraisal modules"),
     (9, "Evidence synthesis", "requires Stufe 1.8+ synthesis"),
 )
@@ -247,6 +248,68 @@ def _render_section_2_regulatory_anchors(context: MPCORenderContext) -> list[str
     # Strip the trailing standalone "> " line for a clean section end.
     if lines and lines[-1] == ">":
         lines.pop()
+    return lines
+
+
+def _render_section_3_inclusion_criteria(context: MPCORenderContext) -> list[str]:
+    """§3 Inclusion criteria — universal baseline + Annex-I criteria.
+
+    Delegates to :func:`make_inclusion_criteria` (the pure factory) for
+    the criterion set. Emits criteria flat in declaration order: the
+    universal ``INC-001`` baseline first, then any
+    ``INC-722-*`` criteria when ``applicable_regulation == "722_2012"``
+    in :class:`AnnexIElement` declaration order.
+
+    Descriptions are reproduced **verbatim** from the factory's
+    :data:`ANNEX_I_DESCRIPTIONS` table.
+    """
+    lines = ["## §3 Inclusion criteria", ""]
+    criteria = make_inclusion_criteria(context.claim)
+    lines.append(f"Total: {len(criteria.criteria)} criterion(a).")
+    lines.append("")
+    for criterion in criteria.criteria:
+        lines.append(f"- `{criterion.id}` — {criterion.description}")
+    lines.append("")
+    return lines
+
+
+def _render_section_4_exclusion_criteria(context: MPCORenderContext) -> list[str]:
+    """§4 Exclusion criteria — full 5-code set, grouped by PRISMA phase.
+
+    Delegates to :func:`make_exclusion_criteria` (the pure factory) for
+    the criterion set, then groups the resulting criteria by their
+    :func:`phase_for` routing tag. Phase groups emit in
+    :class:`PrismaPhase` declaration order (deduplication → screening →
+    eligibility), matching the §5 PRISMA-flow layout for audit
+    consistency.
+
+    Descriptions are reproduced **verbatim** from the factory's
+    :data:`EXCLUSION_DESCRIPTIONS` table.
+    """
+    lines = ["## §4 Exclusion criteria", ""]
+    criteria = make_exclusion_criteria(context.claim)
+
+    # Group emitted criteria by their PRISMA phase. Iterating once over
+    # the factory output keeps the grouping consistent with whatever the
+    # factory decides to emit (in case of future per-claim variation).
+    grouped: dict[PrismaPhase, list] = {phase: [] for phase in PrismaPhase}
+    for criterion in criteria.criteria:
+        # criterion.code is the canonical hyphenated string ("EX-LANGUAGE"
+        # etc.); convert back to the enum to look up the phase routing.
+        code_enum = ExclusionCode(criterion.code)
+        grouped[phase_for(code_enum)].append(criterion)
+
+    # Emit phases in declaration order; skip phases with no criteria
+    # (preserves clean output if a future variant drops a code).
+    for phase in PrismaPhase:
+        phase_criteria = grouped[phase]
+        if not phase_criteria:
+            continue
+        lines.append(f"**{phase.value.capitalize()} phase**:")
+        lines.append("")
+        for criterion in phase_criteria:
+            lines.append(f"- `{criterion.code}` — {criterion.description}")
+        lines.append("")
     return lines
 
 
@@ -380,10 +443,10 @@ def render_mpco_report(
         context: optional :class:`MPCORenderContext` carrying the
             ``MPCOClaim``, screening decisions, and PRISMA flow. When
             ``None``, all of §2-§9 render as PENDING (Stufe-1.7
-            behaviour preserved verbatim). When provided, §2 / §5 / §6
-            / §7 are filled from the context; §3 / §4 / §8 / §9 remain
-            PENDING with updated reasons (criteria-factory extraction
-            and appraisal modules are out of scope for this increment).
+            behaviour preserved verbatim). When provided, §2 / §3 / §4
+            / §5 / §6 / §7 are filled from the context; only §8 / §9
+            remain PENDING (awaiting the appraisal modules in later
+            Stufe-1.8 increments).
 
     Returns:
         A :class:`ReportArtefact` with ``format="markdown"`` and
@@ -428,13 +491,10 @@ def render_mpco_report(
         # Filled sections.
         lines.extend(_render_section_2_regulatory_anchors(context))
         lines.append("")
-        # §3, §4 — still pending; emit in numeric order.
-        for num, title, reason in _PENDING_SECTIONS_WITH_CONTEXT:
-            if num in (3, 4):
-                lines.append(f"## §{num} {title}")
-                lines.append("")
-                lines.append(f"_Pending — {reason}._")
-                lines.append("")
+        lines.extend(_render_section_3_inclusion_criteria(context))
+        lines.append("")
+        lines.extend(_render_section_4_exclusion_criteria(context))
+        lines.append("")
         lines.extend(_render_section_5_prisma_flow(context))
         lines.append("")
         lines.extend(_render_section_6_passed(context))
@@ -443,11 +503,10 @@ def render_mpco_report(
         lines.append("")
         # §8, §9 — still pending.
         for num, title, reason in _PENDING_SECTIONS_WITH_CONTEXT:
-            if num in (8, 9):
-                lines.append(f"## §{num} {title}")
-                lines.append("")
-                lines.append(f"_Pending — {reason}._")
-                lines.append("")
+            lines.append(f"## §{num} {title}")
+            lines.append("")
+            lines.append(f"_Pending — {reason}._")
+            lines.append("")
 
     # ---- §10 Lifecycle counts ------------------------------------------
     lines.append("## §10 Lifecycle counts")
