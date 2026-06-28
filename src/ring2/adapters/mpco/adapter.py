@@ -61,23 +61,17 @@ Stufe 1.8.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from types import MappingProxyType
-
-from ring2.adapters.mpco.exclusion_codes import (
-    ExclusionCode,
-    PrismaPhase,
-    codes_for_phase,
+from ring2.adapters.mpco.criteria_factory import (
+    make_exclusion_criteria,
+    make_inclusion_criteria,
 )
-from ring2.adapters.mpco.reg_722_2012 import AnnexIElement, elements_in_scope
+from ring2.adapters.mpco.exclusion_codes import PrismaPhase, codes_for_phase
 from ring2.adapters.mpco.schema import MPCOClaim, MPCOSchemaDefinition
 from ring2.core.adapter_base import (
     Adapter,
     AppraisalDecision,
     ExclusionCriteria,
-    ExclusionCriterion,
     InclusionCriteria,
-    InclusionCriterion,
     PubMedRecord,
     Question,
     RenderContext,
@@ -92,72 +86,8 @@ __all__ = ["MPCOAdapter"]
 
 
 # ---------------------------------------------------------------------------
-# Static description tables
-# ---------------------------------------------------------------------------
-
-
-#: Human-readable descriptions for every :class:`ExclusionCode`. Wording
-#: tracks the module docstring of :mod:`ring2.adapters.mpco.exclusion_codes`
-#: so that the description seen by the screening LLM is the same wording
-#: the audit trail and any reviewer documentation use.
-_EXCLUSION_DESCRIPTIONS: Mapping[ExclusionCode, str] = MappingProxyType(
-    {
-        ExclusionCode.LANGUAGE: "Title/abstract not in an accepted language.",
-        ExclusionCode.IRRELEVANT: "Topic mismatch detectable from title/abstract alone.",
-        ExclusionCode.DUPLICATE: "Same PMID or DOI seen earlier in the deduplication step.",
-        ExclusionCode.NO_FULLTEXT: "Full text could not be obtained for eligibility check.",
-        ExclusionCode.A6_CATALOG: (
-            "Falls under a MEDDEV 2.7/1 Rev. 4 §A6 exclusion category (eligibility-phase only)."
-        ),
-    }
-)
-
-
-#: Human-readable descriptions for every :class:`AnnexIElement`. Each
-#: ends with the verbatim regulatory anchor ``"per Regulation (EU) No
-#: 722/2012, Annex I."`` so that the audit trail picks up the citation
-#: directly from the inclusion criterion. Per the project's verbatim-
-#: language convention, the trailing citation string must be reproduced
-#: exactly as written here.
-_ANNEX_I_DESCRIPTIONS: Mapping[AnnexIElement, str] = MappingProxyType(
-    {
-        AnnexIElement.GEOGRAPHIC_ORIGIN: (
-            "Evidence addresses geographic origin per Regulation (EU) No 722/2012, Annex I."
-        ),
-        AnnexIElement.TSE_RISK_ASSESSMENT: (
-            "Evidence addresses TSE risk assessment per Regulation (EU) No 722/2012, Annex I."
-        ),
-        AnnexIElement.INACTIVATION_PROCEDURE: (
-            "Evidence addresses pathogen inactivation procedure per "
-            "Regulation (EU) No 722/2012, Annex I."
-        ),
-        AnnexIElement.TRACEABILITY: (
-            "Evidence addresses traceability per Regulation (EU) No 722/2012, Annex I."
-        ),
-    }
-)
-
-
-#: The universal MPCO inclusion criterion, applied to every claim
-#: regardless of ``applicable_regulation``.
-_BASE_INCLUSION = InclusionCriterion(
-    id="INC-001",
-    description="Evidence is relevant to the MPCO claim under appraisal.",
-)
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _annex_i_criterion_id(element: AnnexIElement) -> str:
-    """Build the canonical ``INC-722-*`` criterion id for an Annex-I element.
-
-    Example: ``AnnexIElement.TSE_RISK_ASSESSMENT`` →
-    ``"INC-722-TSE-RISK-ASSESSMENT"``.
-    """
-    return f"INC-722-{element.value.upper()}"
 
 
 def _require_mpco_claim(question: Question, method: str) -> MPCOClaim:
@@ -236,61 +166,40 @@ class MPCOAdapter(Adapter):
     def inclusion_criteria(self, question: Question) -> InclusionCriteria:
         """Return inclusion criteria for an MPCO claim.
 
-        Always includes the universal :data:`_BASE_INCLUSION`. When the
-        claim's ``applicable_regulation == "722_2012"``, additionally
-        emits one criterion per Annex-I element in
-        :func:`elements_in_scope` for the claim's :class:`ClaimType`.
-
-        Annex-I criteria are emitted in :class:`AnnexIElement`
-        declaration order (upstream-to-downstream: origin → TSE risk
-        → inactivation → traceability) for deterministic output.
+        Type-narrows the core :class:`Question` Protocol to
+        :class:`MPCOClaim`, then delegates to the pure factory
+        :func:`make_inclusion_criteria`. The full semantics — universal
+        ``INC-001`` baseline plus Annex-I criteria when
+        ``applicable_regulation == "722_2012"``, emitted in
+        :class:`AnnexIElement` declaration order — live in the factory.
 
         Raises:
             TypeError: if ``question`` is not an :class:`MPCOClaim`.
         """
         claim = _require_mpco_claim(question, "inclusion_criteria")
-        criteria: list[InclusionCriterion] = [_BASE_INCLUSION]
-
-        if claim.applicable_regulation == "722_2012":
-            in_scope = elements_in_scope(claim.claim_type)
-            # Iterate enum in declaration order, filter to in-scope set,
-            # so output ordering is deterministic and regulation-aligned.
-            for element in AnnexIElement:
-                if element in in_scope:
-                    criteria.append(
-                        InclusionCriterion(
-                            id=_annex_i_criterion_id(element),
-                            description=_ANNEX_I_DESCRIPTIONS[element],
-                        )
-                    )
-
-        return InclusionCriteria(criteria=tuple(criteria))
+        return make_inclusion_criteria(claim)
 
     def exclusion_criteria(self, question: Question) -> ExclusionCriteria:
         """Return the full MPCO exclusion-criteria set (all 5 codes).
 
-        The full set spans all three PRISMA phases — deduplication
-        (``EX-DUPLICATE``), screening (``EX-LANGUAGE``,
-        ``EX-IRRELEVANT``), and eligibility (``EX-NO-FULLTEXT``,
-        ``EX-A6-CATALOG``). Callers that need only the screening-phase
-        subset (e.g. :meth:`appraise`) must filter using
-        :func:`codes_for_phase` themselves.
+        Type-narrows the core :class:`Question` Protocol to
+        :class:`MPCOClaim`, then delegates to the pure factory
+        :func:`make_exclusion_criteria`. The factory returns all five
+        codes spanning all three PRISMA phases; callers that need only
+        the screening-phase subset (e.g. :meth:`appraise`) must filter
+        using :func:`codes_for_phase` themselves.
 
-        ``question`` is currently unused — all MPCO claims share the
-        same exclusion set in Stufe 1.6 — but is kept in the signature
-        per the :class:`Adapter` ABC and reserved for per-claim
-        variation in later stages.
+        ``question`` is currently unused at the factory level — all
+        MPCO claims share the same exclusion set in Stufe 1.8 — but
+        is kept in the adapter-method signature per the
+        :class:`Adapter` ABC and reserved for per-claim variation in
+        later stages.
 
         Raises:
             TypeError: if ``question`` is not an :class:`MPCOClaim`.
         """
-        _require_mpco_claim(question, "exclusion_criteria")
-        return ExclusionCriteria(
-            criteria=tuple(
-                ExclusionCriterion(code=code.value, description=_EXCLUSION_DESCRIPTIONS[code])
-                for code in ExclusionCode
-            )
-        )
+        claim = _require_mpco_claim(question, "exclusion_criteria")
+        return make_exclusion_criteria(claim)
 
     # ------------------------------------------------------------------
     # Appraisal — screening-phase only in Stufe 1.6
