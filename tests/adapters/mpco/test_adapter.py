@@ -402,14 +402,12 @@ def test_render_report_delegates_to_renderer(tmp_path: Any) -> None:
     assert "TEST-001" in artefact.content
 
 
-def test_render_report_accepts_optional_context_param(tmp_path: Any) -> None:
-    """Stufe-1.8 Inkrement 1 contract: the new ``context`` parameter is accepted.
+def test_render_report_accepts_none_context_unchanged_behavior(tmp_path: Any) -> None:
+    """Stufe-1.8 Inkrement 5: explicit context=None produces the same output as omitting it.
 
-    The MPCOAdapter currently ignores ``context`` (full pass-through to
-    the renderer follows in Stufe-1.8 Inkrement 5/6). Until then, the
-    signature must still accept both ``context=None`` and an arbitrary
-    object, and produce the same interim report in both cases — same
-    output as the no-context call.
+    The default-None semantics from Inkrement 1 are preserved end-to-end:
+    callers that don't construct an MPCORenderContext still get the
+    Stufe-1.7 interim report (all §2-§9 PENDING with original reasons).
     """
     from ring2.core.session import SessionStateImpl
 
@@ -419,14 +417,68 @@ def test_render_report_accepts_optional_context_param(tmp_path: Any) -> None:
         claim_id="TEST-001",
         session_dir=tmp_path,
     )
-
-    class _DummyContext:
-        """Stand-in for a future MPCORenderContext — empty marker satisfies the Protocol."""
-
     baseline = adapter.render_report(state)
     with_none = adapter.render_report(state, context=None)
-    with_object = adapter.render_report(state, context=_DummyContext())
-
-    # All three calls must succeed and produce equivalent content.
     assert with_none.content == baseline.content
-    assert with_object.content == baseline.content
+
+
+def test_render_report_passes_context_through_to_renderer(tmp_path: Any) -> None:
+    """Stufe-1.8 Inkrement 5: a non-None MPCORenderContext reaches the renderer.
+
+    Effect-based assertion: if context were dropped, §2 would still
+    render its Stufe-1.7 PENDING placeholder. With the pass-through in
+    place, the renderer fills §2 with the 722/2012 anchors and the
+    Inkrement-4-revised reasons replace the original PENDING text.
+    """
+    from datetime import UTC, datetime
+
+    from ring2.adapters.mpco.render_context import MPCORenderContext
+    from ring2.adapters.mpco.schema import (
+        Comparator,
+        Material,
+        MPCOClaim,
+        Outcome,
+        Property,
+    )
+    from ring2.adapters.mpco.table_mapping import CellRef
+    from ring2.core.prisma import PrismaFlow, PrismaPhaseCounts
+    from ring2.core.session import SessionStateImpl
+
+    _ = datetime(2026, 6, 27, 14, 23, 0, tzinfo=UTC)  # tz import sanity
+
+    state = SessionStateImpl(
+        project_id="TEST-PROJ",
+        claim_id="TEST-001",
+        session_dir=tmp_path,
+    )
+    claim = MPCOClaim(
+        claim_id="TEST-001",
+        source_table_cell=CellRef(workbook="wb.xlsx", sheet="s", row=1, column_label="c"),
+        material=Material(description="m"),
+        property=Property(description="p"),
+        comparator=Comparator(description="c"),
+        outcome=Outcome(description="o"),
+        applicable_regulation="722_2012",
+    )
+    flow = PrismaFlow(
+        counts=PrismaPhaseCounts(
+            identified_database=10,
+            identified_other=0,
+            duplicates_removed=0,
+            excluded_screening={},
+            excluded_eligibility={},
+        ),
+        project_id="TEST-PROJ",
+        claim_id="TEST-001",
+        generated_at="2026-06-27T14:23:00Z",
+    )
+    ctx = MPCORenderContext(claim=claim, flow=flow)
+
+    artefact = MPCOAdapter().render_report(state, context=ctx)
+    assert artefact.content is not None
+    # Effect: §2 is now filled (would be PENDING-claim if context dropped).
+    assert "_Pending — requires claim pass-through._" not in artefact.content
+    # And the §2 'criteria-factory' reason for §3/§4 is the Inkrement-4
+    # marker that only appears on the context path — its presence proves
+    # the context reached the renderer.
+    assert "criteria-factory extraction deferred" in artefact.content

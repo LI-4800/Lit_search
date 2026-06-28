@@ -343,12 +343,12 @@ class MPCOAdapter(Adapter):
     ) -> ReportArtefact:
         """Render the interim MPCO markdown report for one session.
 
-        Delegates to :func:`render_mpco_report`. The Stufe-1.7 report is
-        deliberately interim: only state-derived sections are populated;
-        claim-aware and decision-aware sections are listed as explicit
-        pending placeholders with the reason for each deferral. See
-        :mod:`ring2.adapters.mpco.report_renderer` for the section
-        layout and forward-compatibility contract with Stufe 1.8+.
+        Delegates to :func:`render_mpco_report`. When ``context`` is
+        ``None``, the renderer produces the Stufe-1.7 interim report
+        (all §2-§9 PENDING). When ``context`` is an
+        :class:`MPCORenderContext`, the renderer fills §2 / §5 / §6 / §7
+        from the context (Stufe-1.8 Inkrement 4); §3 / §4 / §8 / §9
+        remain PENDING with their own deferral reasons.
 
         Args:
             state: a :class:`SessionState` Protocol instance. In
@@ -356,13 +356,13 @@ class MPCOAdapter(Adapter):
                 renderer reads only its public attributes
                 (``project_id``, ``claim_id``, ``session_dir``,
                 ``status_map``, ``batch_files``).
-            context: optional render context (Stufe-1.8 ``U-1.8-B``,
-                ``Weg B``). Currently accepted to satisfy the ABC's
-                Liskov contract but **not yet consumed** — the wiring
-                of claim / decisions / flow into the rendered §2-§9
-                sections lands in Stufe-1.8 Inkrement 5/6. Until then,
-                passing a context produces the same interim report as
-                ``context=None``.
+            context: optional render context. The ABC types this as the
+                empty :class:`RenderContext` Protocol marker for
+                adapter-agnosticism; the MPCO renderer accepts a
+                concrete :class:`MPCORenderContext` (any other concrete
+                shape is undefined behaviour, surfaced as a downstream
+                AttributeError if the renderer reaches for fields the
+                object does not carry).
         """
         # Defer the import so this module's import graph stays minimal
         # at the ABC level (renderer pulls in stdlib ``importlib.metadata``
@@ -372,7 +372,7 @@ class MPCOAdapter(Adapter):
         # SessionState is a Protocol; render_mpco_report is typed against
         # SessionStateImpl but only reads attributes that the Protocol
         # itself promises plus three further attributes that any real
-        # implementation (including SessionStateImpl) provides.
-        # ``context`` is accepted but currently ignored — see docstring.
-        del context  # explicit: reserved for Stufe-1.8 Inkrement 5/6
-        return render_mpco_report(state)  # type: ignore[arg-type]
+        # implementation (including SessionStateImpl) provides. The
+        # context, when set, is structurally an MPCORenderContext (which
+        # satisfies the empty core RenderContext Protocol).
+        return render_mpco_report(state, context)  # type: ignore[arg-type]
