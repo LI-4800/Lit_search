@@ -68,8 +68,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _run_cmd(args: argparse.Namespace) -> int:
     """Execute the ``run`` sub-command. Returns the process exit code."""
+    # Auto-detect ANTHROPIC_API_KEY → wire ClaudeClient.
+    claude_client = None
     try:
-        result = orchestrator_run(args.project_yaml)
+        from ring2.llm.claude_client import ClaudeClient, api_key_available
+
+        if api_key_available():
+            claude_client = ClaudeClient()
+            print(
+                "ring2: ANTHROPIC_API_KEY detected — using Claude for "
+                "screening and §A6 classification.",
+                file=sys.stderr,
+            )
+    except ImportError:
+        pass
+
+    try:
+        result = orchestrator_run(args.project_yaml, claude_client=claude_client)
     except FileNotFoundError as e:
         print(f"ring2: file not found: {e}", file=sys.stderr)
         return 2

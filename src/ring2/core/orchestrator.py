@@ -394,6 +394,7 @@ def run(
     mcp_caller: MCPCaller | None = None,
     screener_caller: ScreenerCaller | None = None,
     a6_classifier: object | None = None,
+    claude_client: object | None = None,
 ) -> OrchestratorRunResult:
     """Run the full end-to-end pipeline for one project YAML.
 
@@ -405,12 +406,19 @@ def run(
         screener_caller: screening LLM caller. Default
             :class:`NullScreenerCaller` — fine for runs that have no
             records to screen; required (real caller) when records
-            need screening.
+            need screening. If ``None`` and ``claude_client`` is
+            provided, a :class:`~ring2.llm.ClaudeScreener` is built
+            automatically from the resolved claim.
         a6_classifier: optional :class:`MeddevA6Classifier`
-            implementation to inject into the MeddevA6Lens (e.g.
-            :class:`RuleBasedA6Classifier`). When ``None``, the lens
-            stays with its NullA6Classifier default and produces
-            PendingAppraisalResults.
+            implementation to inject into the MeddevA6Lens. If ``None``
+            and ``claude_client`` is provided, a
+            :class:`~ring2.llm.ClaudeA6Classifier` is built
+            automatically.
+        claude_client: optional Claude client. When set, the
+            orchestrator auto-wires :class:`ClaudeScreener` and
+            :class:`ClaudeA6Classifier` for any slots that are not
+            explicitly provided. Pass a :class:`ClaudeClient` for real
+            API calls or a test fake for offline tests.
 
     Returns:
         An :class:`OrchestratorRunResult` summarising the run.
@@ -431,6 +439,18 @@ def run(
     if not output_dir.is_absolute():
         output_dir = base_dir / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Auto-wire Claude-based callers if a client is provided and the
+    # corresponding caller slot is empty.
+    if claude_client is not None:
+        if screener_caller is None:
+            from ring2.llm.claude_screener import ClaudeScreener
+
+            screener_caller = ClaudeScreener(client=claude_client, claim=claim)  # type: ignore[arg-type]
+        if a6_classifier is None:
+            from ring2.llm.claude_a6_classifier import ClaudeA6Classifier
+
+            a6_classifier = ClaudeA6Classifier(client=claude_client)  # type: ignore[arg-type]
 
     actual_mcp = mcp_caller or NullMCPCaller()
     actual_screener = screener_caller or NullScreenerCaller()
