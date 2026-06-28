@@ -29,6 +29,7 @@ dependencies = [
   "pydantic>=2.9",          # typed schemas for MPCO/PICO
   "flask>=3.0",             # UI layer (per architecture v1)
   "click>=8.1",             # CLI
+  "anthropic>=0.112",       # Claude API SDK for LLM-driven screener and §A6 classifier
 ]
 
 [project.optional-dependencies]
