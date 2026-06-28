@@ -380,3 +380,282 @@ def test_renderer_performs_no_io(tmp_path: Path) -> None:
     artefact = render_mpco_report(state)
     assert artefact.content is not None
     assert "does_not_exist_batch_00.yaml" in artefact.content
+
+
+# ===========================================================================
+# Stufe-1.8 Inkrement 4 — context-aware rendering
+#
+# When an MPCORenderContext is provided, §2 / §5 / §6 / §7 are filled.
+# §3 / §4 remain PENDING with a revised reason; §8 / §9 unchanged.
+# ===========================================================================
+
+from datetime import UTC, datetime  # noqa: E402
+
+from ring2.adapters.mpco.decision_persistence import ScreeningDecision  # noqa: E402
+from ring2.adapters.mpco.exclusion_codes import ExclusionCode, PrismaPhase  # noqa: E402
+from ring2.adapters.mpco.render_context import MPCORenderContext  # noqa: E402
+from ring2.adapters.mpco.schema import (  # noqa: E402
+    Comparator,
+    Material,
+    MPCOClaim,
+    Outcome,
+    Property,
+)
+from ring2.adapters.mpco.table_mapping import CellRef  # noqa: E402
+from ring2.core.prisma import PrismaFlow, PrismaPhaseCounts  # noqa: E402
+
+_UTC_NOW = datetime(2026, 6, 27, 14, 23, 0, tzinfo=UTC)
+
+
+def _ctx(
+    claim_id: str = "CB-bov-01",
+    applicable_regulation: str = "722_2012",
+    decisions: tuple[ScreeningDecision, ...] = (),
+    excluded_screening: dict[str, int] | None = None,
+    excluded_eligibility: dict[str, int] | None = None,
+    notes: tuple[str, ...] = (),
+) -> MPCORenderContext:
+    claim = MPCOClaim(
+        claim_id=claim_id,
+        source_table_cell=CellRef(
+            workbook="Comparator-Tables.xlsx",
+            sheet="Bovine-Collagen",
+            row=4,
+            column_label="Pepsin",
+        ),
+        material=Material(description="Bovine-derived collagen"),
+        property=Property(description="Biocompatibility"),
+        comparator=Comparator(description="Porcine-derived collagen"),
+        outcome=Outcome(description="Inflammatory response"),
+        applicable_regulation=applicable_regulation,  # type: ignore[arg-type]
+    )
+    counts = PrismaPhaseCounts(
+        identified_database=100,
+        identified_other=0,
+        duplicates_removed=5,
+        excluded_screening=excluded_screening or {},
+        excluded_eligibility=excluded_eligibility or {},
+    )
+    flow = PrismaFlow(
+        counts=counts,
+        project_id="722-Retro",
+        claim_id=claim_id,
+        generated_at="2026-06-27T14:23:00Z",
+        notes=notes,
+    )
+    return MPCORenderContext(claim=claim, decisions=decisions, flow=flow)
+
+
+def _state(tmp_path: Path) -> SessionStateImpl:
+    return SessionStateImpl(
+        project_id="722-Retro",
+        claim_id="CB-bov-01",
+        session_dir=tmp_path,
+    )
+
+
+# ---------------------------------------------------------------------------
+# §2 Regulatory anchors
+# ---------------------------------------------------------------------------
+
+
+def test_context_none_preserves_stufe_1_7_pending(tmp_path: Path) -> None:
+    """Context=None: §2-§9 all PENDING with original reasons (Stufe-1.7 invariant)."""
+    artefact = render_mpco_report(_state(tmp_path))
+    assert artefact.content is not None
+    # Spot-check verbatim Stufe-1.7 pending reasons preserved.
+    assert "_Pending — requires claim pass-through._" in artefact.content
+    assert "_Pending — requires orchestrator wire-up._" in artefact.content
+    assert "_Pending — requires decision persistence._" in artefact.content
+
+
+def test_context_given_section_2_renders_722_anchors(tmp_path: Path) -> None:
+    """§2 renders verbatim 722/2012 anchors when applicable_regulation matches."""
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx())
+    assert artefact.content is not None
+    # The verbatim anchor strings come from regulatory_anchors() —
+    # we assert one stable fragment to confirm verbatim emission.
+    assert "722/2012" in artefact.content
+    assert "## §2 Regulatory anchors" in artefact.content
+    # In-scope Annex-I header present.
+    assert "Annex-I element" in artefact.content
+    # §2 is no longer PENDING.
+    assert "## §2" in artefact.content
+    assert "_Pending — requires claim pass-through._" not in artefact.content
+
+
+def test_context_given_section_2_non_722_emits_not_applicable(tmp_path: Path) -> None:
+    """When applicable_regulation != '722_2012', §2 emits a 'Not applicable' line."""
+    ctx = _ctx(applicable_regulation="none")
+    artefact = render_mpco_report(_state(tmp_path), context=ctx)
+    assert artefact.content is not None
+    assert "Not applicable" in artefact.content
+
+
+# ---------------------------------------------------------------------------
+# §3 / §4 remain PENDING under the revised reason
+# ---------------------------------------------------------------------------
+
+
+def test_context_given_section_3_4_still_pending_with_new_reason(tmp_path: Path) -> None:
+    """§3 / §4 stay PENDING under 'criteria-factory extraction deferred' when context given."""
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx())
+    assert artefact.content is not None
+    assert "## §3 Inclusion criteria" in artefact.content
+    assert "## §4 Exclusion criteria" in artefact.content
+    assert "criteria-factory extraction deferred" in artefact.content
+
+
+# ---------------------------------------------------------------------------
+# §5 PRISMA flow
+# ---------------------------------------------------------------------------
+
+
+def test_context_given_section_5_renders_counts(tmp_path: Path) -> None:
+    """§5 renders headline tally + per-code breakdowns."""
+    ctx = _ctx(
+        excluded_screening={"EX-IRRELEVANT": 60, "EX-LANGUAGE": 5},
+        excluded_eligibility={"EX-A6-CATALOG": 20},
+    )
+    artefact = render_mpco_report(_state(tmp_path), context=ctx)
+    assert artefact.content is not None
+    c = artefact.content
+    assert "## §5 PRISMA flow" in c
+    assert "Total identified (database + other): 100" in c
+    assert "Duplicates removed: 5" in c
+    # screened = 100 - 5 = 95
+    assert "Records screened: 95" in c
+    # assessed_eligibility = 95 - 60 - 5 = 30
+    assert "Records assessed for eligibility: 30" in c
+    # included = 30 - 20 = 10
+    assert "Records included: 10" in c
+    # Per-code breakdowns
+    assert "`EX-IRRELEVANT`: 60" in c
+    assert "`EX-LANGUAGE`: 5" in c
+    assert "`EX-A6-CATALOG`: 20" in c
+
+
+def test_context_given_section_5_emits_notes_when_present(tmp_path: Path) -> None:
+    ctx = _ctx(notes=("UNKLAR-C3: Pepsin sheet count discrepancy",))
+    artefact = render_mpco_report(_state(tmp_path), context=ctx)
+    assert artefact.content is not None
+    assert "**Notes:**" in artefact.content
+    assert "UNKLAR-C3" in artefact.content
+
+
+def test_context_given_section_5_no_exclusions_emits_none(tmp_path: Path) -> None:
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx())
+    assert artefact.content is not None
+    # With empty excluded_screening/eligibility, _None._ placeholder shows.
+    assert "**Excluded at screening**:" in artefact.content
+    assert "_None._" in artefact.content
+
+
+# ---------------------------------------------------------------------------
+# §6 PASSED records
+# ---------------------------------------------------------------------------
+
+
+def _inc(pmid: str, phase: PrismaPhase = PrismaPhase.SCREENING) -> ScreeningDecision:
+    return ScreeningDecision(
+        pmid=pmid,
+        phase=phase,
+        outcome="include",
+        exclusion_code=None,
+        rationale="on topic",
+        decided_at=_UTC_NOW,
+        decided_by="screener:test",
+    )
+
+
+def _exc(
+    pmid: str,
+    code: ExclusionCode = ExclusionCode.IRRELEVANT,
+    phase: PrismaPhase = PrismaPhase.SCREENING,
+    rationale: str = "off topic",
+) -> ScreeningDecision:
+    return ScreeningDecision(
+        pmid=pmid,
+        phase=phase,
+        outcome="exclude",
+        exclusion_code=code,
+        rationale=rationale,
+        decided_at=_UTC_NOW,
+        decided_by="screener:test",
+    )
+
+
+def test_context_given_section_6_lists_pmids_grouped_by_phase(tmp_path: Path) -> None:
+    decisions = (
+        _inc("11111111", PrismaPhase.SCREENING),
+        _inc("22222222", PrismaPhase.ELIGIBILITY),
+        _inc("33333333", PrismaPhase.SCREENING),
+    )
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx(decisions=decisions))
+    assert artefact.content is not None
+    c = artefact.content
+    assert "## §6 Records passed screening" in c
+    assert "**Phase: screening** (2 record(s))" in c
+    assert "**Phase: eligibility** (1 record(s))" in c
+    # PMIDs sorted lexicographically within phase.
+    screening_block = c.split("**Phase: screening**")[1].split("**Phase:")[0]
+    assert screening_block.index("11111111") < screening_block.index("33333333")
+
+
+def test_context_given_section_6_empty_emits_none(tmp_path: Path) -> None:
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx())
+    assert artefact.content is not None
+    assert "_No records passed screening yet._" in artefact.content
+
+
+# ---------------------------------------------------------------------------
+# §7 EXCLUDED records
+# ---------------------------------------------------------------------------
+
+
+def test_context_given_section_7_groups_by_phase_then_code(tmp_path: Path) -> None:
+    decisions = (
+        _exc("AA", ExclusionCode.IRRELEVANT, PrismaPhase.SCREENING, "off topic A"),
+        _exc("BB", ExclusionCode.LANGUAGE, PrismaPhase.SCREENING, "non-English B"),
+        _exc("CC", ExclusionCode.IRRELEVANT, PrismaPhase.SCREENING, "off topic C"),
+        _exc("DD", ExclusionCode.A6_CATALOG, PrismaPhase.ELIGIBILITY, "A6 cat-a missing"),
+    )
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx(decisions=decisions))
+    assert artefact.content is not None
+    c = artefact.content
+    assert "## §7 Excluded records" in c
+    assert "**Phase: screening** (3 record(s))" in c
+    assert "**Phase: eligibility** (1 record(s))" in c
+    assert "_Code: `EX-IRRELEVANT`_ (2 record(s))" in c
+    assert "_Code: `EX-LANGUAGE`_ (1 record(s))" in c
+    assert "_Code: `EX-A6-CATALOG`_ (1 record(s))" in c
+    # Verbatim rationale present (not paraphrased).
+    assert "A6 cat-a missing" in c
+
+
+def test_context_given_section_7_empty_emits_none(tmp_path: Path) -> None:
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx())
+    assert artefact.content is not None
+    assert "_No records excluded yet._" in artefact.content
+
+
+# ---------------------------------------------------------------------------
+# §8 / §9 + section ordering invariants
+# ---------------------------------------------------------------------------
+
+
+def test_context_given_sections_8_9_still_pending(tmp_path: Path) -> None:
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx())
+    assert artefact.content is not None
+    assert "## §8 Appraisal log" in artefact.content
+    assert "## §9 Evidence synthesis" in artefact.content
+    assert "requires Stufe 1.8+ appraisal modules" in artefact.content
+
+
+def test_context_given_section_order_is_numeric(tmp_path: Path) -> None:
+    """All sections appear in §1, §2, §3, §4, §5, §6, §7, §8, §9, §10, §11, §12 order."""
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx())
+    assert artefact.content is not None
+    c = artefact.content
+    positions = [c.index(f"## §{n} ") for n in range(1, 13)]
+    assert positions == sorted(positions)
