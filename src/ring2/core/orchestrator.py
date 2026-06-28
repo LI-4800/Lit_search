@@ -288,13 +288,41 @@ def run_appraisal(
     claim: MPCOClaim,
     eligible_records: list[PubMedRecord],
     config: ProjectConfig,
+    *,
+    a6_classifier: object | None = None,
 ) -> dict:
     """Dispatch eligible records to the configured appraisal lens.
 
     Returns ``dict[ClaimType, tuple[AppraisalResult, ...]]``. Values
     are tuples for :class:`MPCORenderContext` compatibility.
+
+    Args:
+        claim: claim under appraisal.
+        eligible_records: records past screening + eligibility gates.
+        config: project config (provides ``config.appraisal``).
+        a6_classifier: optional :class:`MeddevA6Classifier` instance to
+            inject into the MeddevA6Lens when it is constructed by the
+            dispatcher's lens factory. When ``None``, the lens falls
+            back to its :class:`NullA6Classifier` default and reports
+            ``is_operational() == False`` — the dispatcher then emits
+            :class:`PendingAppraisalResult` for each eligible record.
     """
-    dispatcher = AppraisalDispatcher(config.appraisal)
+    from ring2.adapters.mpco.appraisal.dispatcher import LensFactory
+    from ring2.adapters.mpco.appraisal.meddev_a6 import MeddevA6Lens
+    from ring2.adapters.mpco.appraisal.registry import get_lens
+
+    factory: LensFactory | None = None
+    if a6_classifier is not None:
+
+        def factory_with_a6(name: str):  # type: ignore[no-untyped-def]
+            cls = get_lens(name)
+            if cls is MeddevA6Lens:
+                return cls(classifier=a6_classifier)  # type: ignore[call-arg]
+            return cls()
+
+        factory = factory_with_a6
+
+    dispatcher = AppraisalDispatcher(config.appraisal, lens_factory=factory)
     raw = dispatcher.dispatch(claim, eligible_records)
     return {ct: tuple(results) for ct, results in raw.items()}
 
@@ -365,6 +393,7 @@ def run(
     *,
     mcp_caller: MCPCaller | None = None,
     screener_caller: ScreenerCaller | None = None,
+    a6_classifier: object | None = None,
 ) -> OrchestratorRunResult:
     """Run the full end-to-end pipeline for one project YAML.
 
@@ -377,6 +406,11 @@ def run(
             :class:`NullScreenerCaller` — fine for runs that have no
             records to screen; required (real caller) when records
             need screening.
+        a6_classifier: optional :class:`MeddevA6Classifier`
+            implementation to inject into the MeddevA6Lens (e.g.
+            :class:`RuleBasedA6Classifier`). When ``None``, the lens
+            stays with its NullA6Classifier default and produces
+            PendingAppraisalResults.
 
     Returns:
         An :class:`OrchestratorRunResult` summarising the run.
@@ -418,7 +452,7 @@ def run(
         write_decision_file(output_dir, claim.claim_id, screening_decisions)
 
     # 6. Dispatch eligible records to the configured appraisal lens.
-    appraisals = run_appraisal(claim, eligible_records, config)
+    appraisals = run_appraisal(claim, eligible_records, config, a6_classifier=a6_classifier)
 
     # 7. Assemble render context.
     context = build_render_context(

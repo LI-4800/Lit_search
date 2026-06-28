@@ -567,3 +567,62 @@ class TestCli:
         captured = capsys.readouterr()
         assert "Report written to" in captured.out
         assert (output_dir / "CB-bov-01_report.md").exists()
+
+
+# ===========================================================================
+# End-to-end with rule-based A6 classifier (Stufe 1.9b)
+# ===========================================================================
+
+
+class TestEndToEndWithRuleBasedA6:
+    def test_pipeline_with_a6_classifier_produces_real_meddev_a6_results(
+        self, tmp_path: Path
+    ) -> None:
+        from ring2.adapters.mpco.appraisal.rule_based_a6 import RuleBasedA6Classifier
+
+        output_dir = tmp_path / "out"
+        # Two records: one well-powered RCT (qualifies), one case report
+        # (flagged by both b and d → does not qualify).
+        _write_batch(
+            output_dir,
+            1,
+            "CB-bov-01",
+            [
+                {
+                    **_record_dict(
+                        "11111111",
+                        "A randomized controlled trial of bovine collagen in 124 patients",
+                    ),
+                    "abstract": "Two-arm RCT with primary outcome.",
+                },
+                {
+                    **_record_dict("22222222", "A case report of bovine collagen anaphylaxis"),
+                    "abstract": "Single patient outcome.",
+                },
+            ],
+        )
+
+        project_yaml = _project_yaml_inline(output_dir_str=str(output_dir))
+        project_path = tmp_path / "project.yaml"
+        project_path.write_text(project_yaml, encoding="utf-8")
+
+        screener = FakeScreenerCaller()  # default: include all
+        result = run(
+            project_path,
+            screener_caller=screener,
+            a6_classifier=RuleBasedA6Classifier(),
+        )
+
+        body = result.report_path.read_text(encoding="utf-8")
+        # MeddevA6Lens.render_summary supplies its own header → real results path.
+        assert "### Lens: MEDDEV 2.7/1 Rev. 4 §A6" in body
+        # Headline tally: 2 appraised, 1 qualifying (the RCT), 1 non-qualifying
+        # (the case report).
+        assert "Records appraised: 2" in body
+        assert "Qualifying (no §A6 deficiency): 1" in body
+        assert "Non-qualifying (≥ 1 §A6 deficiency): 1" in body
+        # No "awaiting" block when classifier is operational.
+        assert "Awaiting classifier" not in body
+        # Per-category tally lines present.
+        assert "b-numbers-too-small" in body
+        assert "d-lack-of-adequate-controls" in body
