@@ -750,11 +750,15 @@ def test_context_given_section_7_empty_emits_none(tmp_path: Path) -> None:
 
 
 def test_context_given_sections_8_9_still_pending(tmp_path: Path) -> None:
+    # With an empty context.appraisals (default), §8 reports the new
+    # Inkrement-3 pending wording referencing the orchestrator wire-up.
+    # §9 remains pending as before.
     artefact = render_mpco_report(_state(tmp_path), context=_ctx())
     assert artefact.content is not None
     assert "## §8 Appraisal log" in artefact.content
     assert "## §9 Evidence synthesis" in artefact.content
-    assert "requires Stufe 1.8+ appraisal modules" in artefact.content
+    assert "wire the appraisal dispatcher" in artefact.content
+    assert "requires Stufe 1.8+ synthesis" in artefact.content
 
 
 def test_context_given_section_order_is_numeric(tmp_path: Path) -> None:
@@ -764,3 +768,182 @@ def test_context_given_section_order_is_numeric(tmp_path: Path) -> None:
     c = artefact.content
     positions = [c.index(f"## §{n} ") for n in range(1, 13)]
     assert positions == sorted(positions)
+
+
+# ---------------------------------------------------------------------------
+# §8 Appraisal log — Inkrement 3 (context.appraisals path)
+# ---------------------------------------------------------------------------
+
+
+def _ctx_with_appraisals(
+    appraisals: dict,  # dict[ClaimType, tuple[AppraisalResult, ...]]
+    claim_id: str = "CB-bov-01",
+) -> MPCORenderContext:
+    """Build a context with a custom appraisals mapping."""
+    claim = MPCOClaim(
+        claim_id=claim_id,
+        source_table_cell=CellRef(
+            workbook="Comparator-Tables.xlsx",
+            sheet="Bovine-Collagen",
+            row=4,
+            column_label="Pepsin",
+        ),
+        material=Material(description="Bovine-derived collagen"),
+        property=Property(description="Biocompatibility"),
+        comparator=Comparator(description="Porcine-derived collagen"),
+        outcome=Outcome(description="Inflammatory response"),
+        applicable_regulation="722_2012",
+        claim_type=ClaimType.UNKNOWN,
+    )
+    counts = PrismaPhaseCounts(
+        identified_database=100,
+        identified_other=0,
+        duplicates_removed=5,
+        excluded_screening={},
+        excluded_eligibility={},
+    )
+    flow = PrismaFlow(
+        counts=counts,
+        project_id="722-Retro",
+        claim_id=claim_id,
+        generated_at="2026-06-27T14:23:00Z",
+        notes=(),
+    )
+    return MPCORenderContext(claim=claim, decisions=(), flow=flow, appraisals=appraisals)
+
+
+def test_section_8_empty_appraisals_emits_orchestrator_pending(tmp_path: Path) -> None:
+    """Empty appraisals → pending placeholder referencing the orchestrator wire-up."""
+    artefact = render_mpco_report(_state(tmp_path), context=_ctx())
+    assert artefact.content is not None
+    c = artefact.content
+    assert "## §8 Appraisal log" in c
+    assert "wire the appraisal dispatcher" in c
+    assert "Stufe 1.9a Inkrement 4" in c
+
+
+def test_section_8_all_pending_results_render_awaiting_block(tmp_path: Path) -> None:
+    """All-pending results for one claim type → 'awaiting classifier' block."""
+    from ring2.adapters.mpco.appraisal.dispatcher import PendingAppraisalResult
+
+    pending_results = (
+        PendingAppraisalResult(
+            pmid="111", lens_name="meddev_a6", rationale="awaiting", qualifies=False
+        ),
+        PendingAppraisalResult(
+            pmid="222", lens_name="meddev_a6", rationale="awaiting", qualifies=False
+        ),
+    )
+    ctx = _ctx_with_appraisals({ClaimType.CLINICAL_PERFORMANCE: pending_results})
+    artefact = render_mpco_report(_state(tmp_path), context=ctx)
+    assert artefact.content is not None
+    c = artefact.content
+
+    # Sub-section header carries lens name and claim type.
+    assert "### Lens: meddev_a6 (claim type: clinical_performance)" in c
+    # Awaiting block with eligible-record count.
+    assert "Awaiting classifier/implementation" in c
+    assert "2 eligible record(s)" in c
+    # Eligible PMIDs listed.
+    assert "`111`" in c
+    assert "`222`" in c
+    # No real-results summary leaked in.
+    assert "Records appraised" not in c
+
+
+def test_section_8_real_results_delegate_to_lens_render_summary(tmp_path: Path) -> None:
+    """Real (non-pending) results delegate to lens.render_summary."""
+    from ring2.adapters.mpco.appraisal.meddev_a6 import (
+        A6Category,
+        MeddevA6Result,
+    )
+
+    real_results = (
+        MeddevA6Result(
+            pmid="111",
+            lens_name="meddev_a6",
+            rationale="no deficiencies",
+            qualifies=True,
+            applicable_categories=frozenset(),
+            category_findings={},
+        ),
+        MeddevA6Result(
+            pmid="222",
+            lens_name="meddev_a6",
+            rationale="under-powered",
+            qualifies=False,
+            applicable_categories=frozenset({A6Category.B_NUMBERS_TOO_SMALL}),
+            category_findings={A6Category.B_NUMBERS_TOO_SMALL: "n=4 — preliminary"},
+        ),
+    )
+    ctx = _ctx_with_appraisals({ClaimType.CLINICAL_PERFORMANCE: real_results})
+    artefact = render_mpco_report(_state(tmp_path), context=ctx)
+    assert artefact.content is not None
+    c = artefact.content
+
+    # MeddevA6Lens.render_summary supplies its own ### header.
+    assert "### Lens: MEDDEV 2.7/1 Rev. 4 §A6" in c
+    # Headline tally.
+    assert "Records appraised: 2" in c
+    assert "Qualifying (no §A6 deficiency): 1" in c
+    assert "Non-qualifying (≥ 1 §A6 deficiency): 1" in c
+    # No awaiting block when results are real.
+    assert "Awaiting classifier/implementation" not in c
+
+
+def test_section_8_iterates_claim_types_in_declaration_order(tmp_path: Path) -> None:
+    """Multiple claim types render in ClaimType declaration order."""
+    from ring2.adapters.mpco.appraisal.dispatcher import PendingAppraisalResult
+
+    cp = PendingAppraisalResult(pmid="cp1", lens_name="meddev_a6", rationale="x", qualifies=False)
+    bm = PendingAppraisalResult(pmid="bm1", lens_name="glp_oecd", rationale="x", qualifies=False)
+    # Insert in reverse declaration order to verify the renderer
+    # re-orders deterministically.
+    ctx = _ctx_with_appraisals(
+        {
+            ClaimType.CLINICAL_PERFORMANCE: (cp,),
+            ClaimType.BIOCHEMISTRY_MATERIAL_PROPERTY: (bm,),
+        }
+    )
+    artefact = render_mpco_report(_state(tmp_path), context=ctx)
+    assert artefact.content is not None
+    c = artefact.content
+
+    # ClaimType declaration order: REGULATORY_COMPLIANCE,
+    # BIOCHEMISTRY_MATERIAL_PROPERTY, SAFETY_ALLERGENICITY,
+    # CLINICAL_PERFORMANCE, HISTORICAL_MARKET_USE, UNKNOWN.
+    # Only the two we provided appear, in that order.
+    pos_biochem = c.index("(claim type: biochemistry_material_property)")
+    pos_clinical = c.index("(claim type: clinical_performance)")
+    assert pos_biochem < pos_clinical
+
+
+def test_section_8_unknown_lens_in_results_falls_back_gracefully(tmp_path: Path) -> None:
+    """Real-results path with an unregistered lens_name does not crash."""
+    from ring2.adapters.mpco.appraisal.base import AppraisalResult
+
+    results = (
+        AppraisalResult(
+            pmid="111",
+            lens_name="never_registered_lens",
+            rationale="x",
+            qualifies=True,
+        ),
+    )
+    ctx = _ctx_with_appraisals({ClaimType.CLINICAL_PERFORMANCE: results})
+    artefact = render_mpco_report(_state(tmp_path), context=ctx)
+    assert artefact.content is not None
+    c = artefact.content
+    assert "never_registered_lens" in c
+    assert "not registered" in c
+
+
+def test_section_8_skips_empty_results_for_claim_type(tmp_path: Path) -> None:
+    """A claim_type key with an empty tuple is silently skipped."""
+    ctx = _ctx_with_appraisals({ClaimType.CLINICAL_PERFORMANCE: ()})
+    artefact = render_mpco_report(_state(tmp_path), context=ctx)
+    assert artefact.content is not None
+    c = artefact.content
+    assert "## §8 Appraisal log" in c
+    # No sub-section header because no results.
+    assert "### Lens:" not in c

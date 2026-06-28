@@ -62,6 +62,9 @@ from datetime import UTC, datetime
 from importlib import metadata
 from typing import TYPE_CHECKING
 
+from ring2.adapters.mpco.appraisal.dispatcher import PendingAppraisalResult
+from ring2.adapters.mpco.appraisal.registry import get_lens
+from ring2.adapters.mpco.claim_type_classifier import ClaimType
 from ring2.adapters.mpco.criteria_factory import (
     make_exclusion_criteria,
     make_inclusion_criteria,
@@ -121,9 +124,10 @@ _PENDING_SECTIONS_NO_CONTEXT: tuple[tuple[int, str, str], ...] = (
     (9, "Evidence synthesis", "requires Stufe 1.8+ synthesis"),
 )
 
-#: Pending sections when a context IS provided. §8 / §9 only.
+#: Pending sections when a context IS provided. After Inkrement 3, §8
+#: is filled from ``context.appraisals``; only §9 remains pending
+#: (awaiting evidence synthesis, Stufe 1.10+).
 _PENDING_SECTIONS_WITH_CONTEXT: tuple[tuple[int, str, str], ...] = (
-    (8, "Appraisal log", "requires Stufe 1.8+ appraisal modules"),
     (9, "Evidence synthesis", "requires Stufe 1.8+ synthesis"),
 )
 
@@ -425,6 +429,100 @@ def _render_section_7_excluded(context: MPCORenderContext) -> list[str]:
     return lines
 
 
+def _render_section_8_appraisal_log(context: MPCORenderContext) -> list[str]:
+    """§8 Appraisal log — render appraisal results per claim type.
+
+    Behaviour:
+
+    * Empty :attr:`MPCORenderContext.appraisals` → pending placeholder
+      (matches the Stufe-1.8 §8 wording — context provided but
+      appraisal phase has not been wired up yet).
+    * Non-empty → one sub-section per claim type, ordered by the
+      ClaimType enum's declaration order for determinism. Within each
+      sub-section:
+
+      - if **all** results in that sub-section are
+        :class:`PendingAppraisalResult` instances (non-operational
+        lens) → render the *"awaiting classifier/implementation"*
+        block with the eligible-record PMIDs;
+      - otherwise → delegate to ``lens.render_summary(results)`` via a
+        registry-lookup + no-arg lens instantiation. The lens itself
+        sets its own sub-section header (e.g. ``MeddevA6Lens`` emits
+        ``### Lens: MEDDEV 2.7/1 Rev. 4 §A6``), so the renderer does
+        not add an extra ``###`` line here.
+
+    The mixed case (some results pending, others real, under the same
+    claim type) should not be produced by
+    :class:`~ring2.adapters.mpco.appraisal.dispatcher.AppraisalDispatcher`,
+    which is all-or-nothing per dispatch. If it does occur (e.g. via
+    hand-crafted context in tests), the renderer falls back to the
+    real-results path — ``lens.render_summary`` will surface the
+    inconsistency through its own type checks.
+    """
+    lines = ["## §8 Appraisal log", ""]
+
+    if not context.appraisals:
+        lines.append(
+            "_Pending — requires the orchestrator to wire the appraisal "
+            "dispatcher into context.appraisals (Stufe 1.9a Inkrement 4)._"
+        )
+        return lines
+
+    # Iterate by ClaimType declaration order for determinism.
+    for claim_type in ClaimType:
+        results = context.appraisals.get(claim_type)
+        if not results:
+            continue
+
+        all_pending = all(isinstance(r, PendingAppraisalResult) for r in results)
+        # All results share the same lens_name when produced by the
+        # dispatcher; fall back to "(mixed)" if hand-crafted tests
+        # break that invariant.
+        lens_names = {r.lens_name for r in results}
+        lens_label = lens_names.pop() if len(lens_names) == 1 else "(mixed)"
+
+        if all_pending:
+            n = len(results)
+            lines.append(f"### Lens: {lens_label} (claim type: {claim_type.value})")
+            lines.append("")
+            lines.append(
+                f"_**Awaiting classifier/implementation** — {n} eligible "
+                f"record(s) cannot be appraised yet. Scheduled: Stufe "
+                f"1.9b / 1.10+._"
+            )
+            lines.append("")
+            for pmid in sorted(r.pmid for r in results):
+                lines.append(f"- `{pmid}`")
+            lines.append("")
+            continue
+
+        # Real-results path: delegate to the lens's own summary
+        # renderer. The lens supplies its own sub-section header.
+        try:
+            lens_cls = get_lens(lens_label)
+        except KeyError:
+            # Defensive: results carry a lens_name not in the registry.
+            # Should not happen in production; surface clearly.
+            lines.append(f"### Lens: {lens_label} (claim type: {claim_type.value})")
+            lines.append("")
+            lines.append(
+                f"_Lens {lens_label!r} is not registered; cannot render "
+                f"summary. {len(results)} result(s) suppressed._"
+            )
+            lines.append("")
+            continue
+
+        lens_instance = lens_cls()
+        summary = lens_instance.render_summary(tuple(results))
+        lines.extend(summary.splitlines())
+        # Ensure a blank separator after the lens-supplied block, in case
+        # render_summary did not append one.
+        if lines and lines[-1] != "":
+            lines.append("")
+
+    return lines
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -501,7 +599,9 @@ def render_mpco_report(
         lines.append("")
         lines.extend(_render_section_7_excluded(context))
         lines.append("")
-        # §8, §9 — still pending.
+        lines.extend(_render_section_8_appraisal_log(context))
+        lines.append("")
+        # §9 — still pending.
         for num, title, reason in _PENDING_SECTIONS_WITH_CONTEXT:
             lines.append(f"## §{num} {title}")
             lines.append("")

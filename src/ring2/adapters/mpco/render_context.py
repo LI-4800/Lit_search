@@ -13,7 +13,7 @@
 # limitations under the License.
 """Adapter-specific render-time context for the MPCO adapter (Stufe-1.8 Inkrement 3).
 
-Bundles the three pieces of information the renderer needs beyond the
+Bundles the four pieces of information the renderer needs beyond the
 adapter-agnostic :class:`SessionState`:
 
     1. the :class:`MPCOClaim` (so the report can quote M/P/C/O fields
@@ -22,6 +22,9 @@ adapter-agnostic :class:`SessionState`:
        record listings can be rendered)
     3. the :class:`PrismaFlow` (so the §5 PRISMA flow section can be
        rendered with balanced counts)
+    4. the appraisal results per claim type (so §8 can render the
+       methodological-appraisal log — populated by the appraisal
+       dispatcher from Stufe-1.9a Inkrement 2)
 
 Resolves ``U-1.8-B`` (``Weg B``): rather than persisting these to disk
 in a location the renderer would have to read, the orchestrator
@@ -49,8 +52,10 @@ Cross-validator:
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ring2.adapters.mpco.appraisal.base import AppraisalResult
+from ring2.adapters.mpco.claim_type_classifier import ClaimType
 from ring2.adapters.mpco.decision_persistence import ScreeningDecision
 from ring2.adapters.mpco.schema import MPCOClaim
 from ring2.core.prisma import PrismaFlow
@@ -72,6 +77,15 @@ class MPCORenderContext(BaseModel):
             renderer simply produces an empty PASSED/EXCLUDED listing).
         flow: the balanced :class:`PrismaFlow` for this claim. Must
             agree with ``claim.claim_id`` via validator ``C1``.
+        appraisals: per-claim-type appraisal results produced by the
+            :class:`~ring2.adapters.mpco.appraisal.dispatcher.AppraisalDispatcher`.
+            Default empty — a context constructed before the appraisal
+            phase has run is still valid (the renderer falls back to
+            the §8-pending behaviour for empty mappings). Each value is
+            a tuple of :class:`AppraisalResult` (or subclass — e.g.
+            :class:`~ring2.adapters.mpco.appraisal.dispatcher.PendingAppraisalResult`
+            for non-operational lenses). Tuples (not lists) for
+            immutability consistent with ``decisions``.
     """
 
     model_config = ConfigDict(
@@ -86,6 +100,7 @@ class MPCORenderContext(BaseModel):
     claim: MPCOClaim
     decisions: tuple[ScreeningDecision, ...] = ()
     flow: PrismaFlow
+    appraisals: dict[ClaimType, tuple[AppraisalResult, ...]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _claim_flow_claim_id_consistent(self) -> MPCORenderContext:

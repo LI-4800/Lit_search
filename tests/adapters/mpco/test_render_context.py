@@ -183,3 +183,47 @@ def test_mpco_render_context_satisfies_render_context_protocol() -> None:
     """
     ctx: Any = MPCORenderContext(claim=_claim(), flow=_flow())
     assert isinstance(ctx, RenderContext) is True
+
+
+# ---------------------------------------------------------------------------
+# 8: appraisals field — Inkrement 3
+# ---------------------------------------------------------------------------
+
+
+def test_mpco_render_context_appraisals_default_is_empty_dict() -> None:
+    """Default-constructed context has an empty appraisals mapping."""
+    ctx = MPCORenderContext(claim=_claim(), flow=_flow())
+    assert ctx.appraisals == {}
+
+
+def test_mpco_render_context_appraisals_default_is_per_instance() -> None:
+    """Default-factory produces a fresh dict per instance (no shared state)."""
+    ctx1 = MPCORenderContext(claim=_claim(), flow=_flow())
+    ctx2 = MPCORenderContext(claim=_claim(), flow=_flow())
+    assert ctx1.appraisals is not ctx2.appraisals
+
+
+def test_mpco_render_context_appraisals_accepts_results() -> None:
+    """Appraisals dict accepts tuple values of AppraisalResult subclasses."""
+    from ring2.adapters.mpco.appraisal.base import AppraisalResult
+    from ring2.adapters.mpco.appraisal.dispatcher import PendingAppraisalResult
+    from ring2.adapters.mpco.claim_type_classifier import ClaimType
+
+    real = AppraisalResult(pmid="111", lens_name="meddev_a6", rationale="x", qualifies=True)
+    pending = PendingAppraisalResult(
+        pmid="222", lens_name="meddev_a6", rationale="awaiting", qualifies=False
+    )
+    ctx = MPCORenderContext(
+        claim=_claim(),
+        flow=_flow(),
+        appraisals={ClaimType.CLINICAL_PERFORMANCE: (real, pending)},
+    )
+    assert ClaimType.CLINICAL_PERFORMANCE in ctx.appraisals
+    assert len(ctx.appraisals[ClaimType.CLINICAL_PERFORMANCE]) == 2
+
+
+def test_mpco_render_context_appraisals_field_is_immutable_on_model() -> None:
+    """The model itself remains frozen — cannot reassign the appraisals field."""
+    ctx = MPCORenderContext(claim=_claim(), flow=_flow())
+    with pytest.raises(ValidationError):
+        ctx.appraisals = {}  # type: ignore[misc]
