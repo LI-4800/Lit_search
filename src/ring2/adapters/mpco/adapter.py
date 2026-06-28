@@ -51,9 +51,12 @@ inclusion criteria; the gating happens here at the adapter layer so
 generic (non-722/2012) projects remain clean of regulation-specific
 artefacts.
 
-Reporting (:meth:`render_report`) is a deliberate stub in Stufe 1.6;
-the full implementation lands in Stufe 1.7 alongside the §A6 appraisal
-module.
+Reporting (:meth:`render_report`) delegates to
+:mod:`ring2.adapters.mpco.report_renderer`. Per the Weg-3 decision
+(Stufe 1.7), the report is interim by design: only state-derived
+sections are populated, with claim- and decision-aware sections held as
+numbered pending placeholders awaiting orchestrator wire-up in
+Stufe 1.8.
 """
 
 from __future__ import annotations
@@ -140,12 +143,6 @@ _BASE_INCLUSION = InclusionCriterion(
     id="INC-001",
     description="Evidence is relevant to the MPCO claim under appraisal.",
 )
-
-
-#: Placeholder content returned by :meth:`MPCOAdapter.render_report` in
-#: Stufe 1.6. The full markdown report implementation lands in Stufe 1.7
-#: (`meddev_a6_appraisal.py` companion).
-_RENDER_REPORT_STUB_CONTENT = "MPCO report — full implementation in Stufe 1.7"
 
 
 # ---------------------------------------------------------------------------
@@ -335,16 +332,33 @@ class MPCOAdapter(Adapter):
         return screen_record(record, inclusion, screening_exclusion, caller=self._caller)
 
     # ------------------------------------------------------------------
-    # Reporting — STUB in Stufe 1.6, full implementation in Stufe 1.7
+    # Reporting — interim renderer (Stufe 1.7)
     # ------------------------------------------------------------------
 
     def render_report(self, state: SessionState) -> ReportArtefact:
-        """Return a placeholder report artefact.
+        """Render the interim MPCO markdown report for one session.
 
-        The full markdown report (PRISMA flow numbers, included-records
-        table, §A6 appraisal log, evidence-synthesis section) is
-        Stufe 1.7's responsibility. Stufe 1.6 returns a stub so the
-        :class:`Adapter` contract is satisfied end-to-end and the
-        adapter can be wired into the orchestration layer immediately.
+        Delegates to :func:`render_mpco_report`. The Stufe-1.7 report is
+        deliberately interim: only state-derived sections are populated;
+        claim-aware and decision-aware sections are listed as explicit
+        pending placeholders with the reason for each deferral. See
+        :mod:`ring2.adapters.mpco.report_renderer` for the section
+        layout and forward-compatibility contract with Stufe 1.8+.
+
+        Args:
+            state: a :class:`SessionState` Protocol instance. In
+                production this is :class:`SessionStateImpl`; the
+                renderer reads only its public attributes
+                (``project_id``, ``claim_id``, ``session_dir``,
+                ``status_map``, ``batch_files``).
         """
-        return ReportArtefact(format="markdown", content=_RENDER_REPORT_STUB_CONTENT)
+        # Defer the import so this module's import graph stays minimal
+        # at the ABC level (renderer pulls in stdlib ``importlib.metadata``
+        # which we don't need just to construct an MPCOAdapter).
+        from ring2.adapters.mpco.report_renderer import render_mpco_report
+
+        # SessionState is a Protocol; render_mpco_report is typed against
+        # SessionStateImpl but only reads attributes that the Protocol
+        # itself promises plus three further attributes that any real
+        # implementation (including SessionStateImpl) provides.
+        return render_mpco_report(state)  # type: ignore[arg-type]

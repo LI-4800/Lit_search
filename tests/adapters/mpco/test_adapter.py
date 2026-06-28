@@ -27,7 +27,6 @@ from ring2.core.adapter_base import (
     PubMedRecord,
     ReportArtefact,
     Schema,
-    SessionState,
     get,
 )
 
@@ -372,27 +371,32 @@ def test_appraise_raises_on_non_mpco_claim() -> None:
 
 
 # ---------------------------------------------------------------------------
-# render_report — Stufe 1.6 stub
+# render_report — Stufe 1.7 interim renderer (delegates to report_renderer)
 # ---------------------------------------------------------------------------
 
 
-def test_render_report_returns_stub_markdown() -> None:
-    """Stufe 1.6 contract: a stub ReportArtefact with markdown format + Stufe-1.7 pointer."""
+def test_render_report_delegates_to_renderer(tmp_path: Any) -> None:
+    """Stufe 1.7 contract: render_report returns the interim markdown report.
+
+    The full content/section behaviour is covered by the renderer's own
+    test module; this test only asserts the adapter delegation contract
+    (format, key markers present).
+    """
+    from ring2.adapters.mpco.report_renderer import STATUS_BANNER
+    from ring2.core.session import SessionStateImpl
+
     adapter = MPCOAdapter()
-    # Build a minimal SessionState-like stub satisfying only the Protocol.
-
-    class _StubState:
-        @property
-        def project_id(self) -> str:
-            return "TEST-PROJ"
-
-        @property
-        def claim_id(self) -> str:
-            return "TEST-001"
-
-    state: SessionState = _StubState()  # type: ignore[assignment]
+    state = SessionStateImpl(
+        project_id="TEST-PROJ",
+        claim_id="TEST-001",
+        session_dir=tmp_path,
+    )
     artefact = adapter.render_report(state)
     assert isinstance(artefact, ReportArtefact)
     assert artefact.format == "markdown"
     assert artefact.content is not None
-    assert "Stufe 1.7" in artefact.content
+    # Status banner present — confirms the interim contract is in force.
+    assert STATUS_BANNER in artefact.content
+    # Identifiers from state flow through.
+    assert "TEST-PROJ" in artefact.content
+    assert "TEST-001" in artefact.content
