@@ -116,3 +116,45 @@ def test_appraisal_lens_concrete_subclass_works() -> None:
     assert lens.name == "fake"
     assert ClaimType.CLINICAL_PERFORMANCE in lens.applicable_claim_types
     assert lens.render_summary(()) == "## fake — 0 record(s)\n"
+
+
+# ---------------------------------------------------------------------------
+# AppraisalLens — is_operational() default
+# ---------------------------------------------------------------------------
+
+
+def test_is_operational_defaults_to_false() -> None:
+    """The ABC's default is_operational() returns False — fail-safe."""
+
+    class _Fake(AppraisalLens):
+        name: ClassVar[str] = "fake_op_default"
+        applicable_claim_types: ClassVar[frozenset[ClaimType]] = frozenset()
+
+        def appraise(self, record: PubMedRecord, claim: MPCOClaim) -> AppraisalResult:
+            raise NotImplementedError
+
+        def render_summary(self, results: tuple[AppraisalResult, ...]) -> str:
+            return ""
+
+    assert _Fake().is_operational() is False
+
+
+def test_is_operational_subclass_can_override_to_true() -> None:
+    """A lens that is genuinely operational overrides is_operational() to True."""
+
+    class _Operational(AppraisalLens):
+        name: ClassVar[str] = "fake_op_true"
+        applicable_claim_types: ClassVar[frozenset[ClaimType]] = frozenset()
+
+        def appraise(self, record: PubMedRecord, claim: MPCOClaim) -> AppraisalResult:
+            return AppraisalResult(
+                pmid=record.pmid, lens_name=self.name, rationale="ok", qualifies=True
+            )
+
+        def render_summary(self, results: tuple[AppraisalResult, ...]) -> str:
+            return ""
+
+        def is_operational(self) -> bool:
+            return True
+
+    assert _Operational().is_operational() is True

@@ -174,3 +174,32 @@ class AppraisalLens(ABC):
             for this lens. The section header is the renderer's
             responsibility.
         """
+
+    def is_operational(self) -> bool:
+        """Whether this lens instance is ready to produce real appraisal results.
+
+        The default implementation returns ``False`` — a fail-safe
+        choice so that registry stubs (e.g. ``Rob2Lens``,
+        ``GlpOecdLens``) and lenses constructed with a null dependency
+        (e.g. :class:`~ring2.adapters.mpco.appraisal.meddev_a6.MeddevA6Lens`
+        with :class:`~ring2.adapters.mpco.appraisal.meddev_a6.NullA6Classifier`)
+        all report ``False`` without further action. A lens that is
+        truly ready to appraise records must override this and return
+        ``True`` (or compute readiness from its injected dependencies,
+        as ``MeddevA6Lens`` does for its classifier slot).
+
+        The orchestrator's appraisal dispatcher consults this flag
+        *before* calling :meth:`appraise`. When ``False``, the
+        dispatcher does not invoke ``appraise`` (avoiding the
+        ``NotImplementedError`` / ``ValueError`` that stubs and null-
+        dependency lenses would raise) and emits a pending marker for
+        each eligible record instead. The §8 report renderer turns
+        those markers into an *"awaiting classifier/implementation"*
+        sub-section per the Stufe-1.9a NullClassifier-aware-bypass
+        decision.
+
+        Returns:
+            ``True`` if :meth:`appraise` is safe to invoke on this
+            instance; ``False`` otherwise.
+        """
+        return False

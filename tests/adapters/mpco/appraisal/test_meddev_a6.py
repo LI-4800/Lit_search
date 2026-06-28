@@ -233,6 +233,28 @@ def test_meddev_a6_default_classifier_is_null() -> None:
         lens.appraise(_make_record(), _make_claim())
 
 
+def test_meddev_a6_is_operational_false_with_null_classifier() -> None:
+    """Default-constructed lens has a NullA6Classifier → not operational."""
+    assert MeddevA6Lens().is_operational() is False
+
+
+def test_meddev_a6_is_operational_false_with_explicit_null_classifier() -> None:
+    """Explicitly-passed NullA6Classifier also reports non-operational."""
+    assert MeddevA6Lens(classifier=NullA6Classifier()).is_operational() is False
+
+
+def test_meddev_a6_is_operational_true_with_real_classifier() -> None:
+    """A non-null classifier flips is_operational() to True."""
+    fake = _FakeClassifier(
+        outcome=A6Classification(
+            applicable_categories=frozenset(),
+            category_findings={},
+            rationale="No §A6 deficiency detected.",
+        )
+    )
+    assert MeddevA6Lens(classifier=fake).is_operational() is True
+
+
 # ---------------------------------------------------------------------------
 # Lens.appraise — delegation + threshold + guard
 # ---------------------------------------------------------------------------

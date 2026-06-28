@@ -159,3 +159,16 @@ def test_stub_render_summary_raises_not_implemented(
     msg = str(exc_info.value)
     assert lens_cls.__name__ in msg
     assert "render_summary" in msg
+
+
+@pytest.mark.parametrize(
+    ("lens_name", "lens_cls", "expected_claim_types"),
+    EXPECTED_STUBS,
+)
+def test_stub_is_operational_false(
+    lens_name: str,
+    lens_cls: type,
+    expected_claim_types: frozenset[ClaimType],
+) -> None:
+    """Each stub inherits the ABC default is_operational() == False."""
+    assert lens_cls().is_operational() is False

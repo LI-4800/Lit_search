@@ -280,6 +280,15 @@ class MeddevA6Lens(AppraisalLens):
         """
         self._classifier: MeddevA6Classifier = classifier or NullA6Classifier()
 
+    def is_operational(self) -> bool:
+        """``True`` iff a non-null :class:`MeddevA6Classifier` is installed.
+
+        The lens itself is methodologically complete (Inkrement 7), so
+        readiness reduces to: *is the classifier slot a real classifier
+        rather than the :class:`NullA6Classifier` placeholder?*
+        """
+        return not isinstance(self._classifier, NullA6Classifier)
+
     def appraise(self, record: PubMedRecord, claim: MPCOClaim) -> MeddevA6Result:
         """Appraise one record against §A6 for one claim.
 
