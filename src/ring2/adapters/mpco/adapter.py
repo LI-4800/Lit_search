@@ -80,6 +80,7 @@ from ring2.core.adapter_base import (
     InclusionCriterion,
     PubMedRecord,
     Question,
+    RenderContext,
     ReportArtefact,
     Schema,
     SessionState,
@@ -335,7 +336,11 @@ class MPCOAdapter(Adapter):
     # Reporting — interim renderer (Stufe 1.7)
     # ------------------------------------------------------------------
 
-    def render_report(self, state: SessionState) -> ReportArtefact:
+    def render_report(
+        self,
+        state: SessionState,
+        context: RenderContext | None = None,
+    ) -> ReportArtefact:
         """Render the interim MPCO markdown report for one session.
 
         Delegates to :func:`render_mpco_report`. The Stufe-1.7 report is
@@ -351,6 +356,13 @@ class MPCOAdapter(Adapter):
                 renderer reads only its public attributes
                 (``project_id``, ``claim_id``, ``session_dir``,
                 ``status_map``, ``batch_files``).
+            context: optional render context (Stufe-1.8 ``U-1.8-B``,
+                ``Weg B``). Currently accepted to satisfy the ABC's
+                Liskov contract but **not yet consumed** — the wiring
+                of claim / decisions / flow into the rendered §2-§9
+                sections lands in Stufe-1.8 Inkrement 5/6. Until then,
+                passing a context produces the same interim report as
+                ``context=None``.
         """
         # Defer the import so this module's import graph stays minimal
         # at the ABC level (renderer pulls in stdlib ``importlib.metadata``
@@ -361,4 +373,6 @@ class MPCOAdapter(Adapter):
         # SessionStateImpl but only reads attributes that the Protocol
         # itself promises plus three further attributes that any real
         # implementation (including SessionStateImpl) provides.
+        # ``context`` is accepted but currently ignored — see docstring.
+        del context  # explicit: reserved for Stufe-1.8 Inkrement 5/6
         return render_mpco_report(state)  # type: ignore[arg-type]

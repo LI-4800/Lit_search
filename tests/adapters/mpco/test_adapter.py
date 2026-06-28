@@ -400,3 +400,33 @@ def test_render_report_delegates_to_renderer(tmp_path: Any) -> None:
     # Identifiers from state flow through.
     assert "TEST-PROJ" in artefact.content
     assert "TEST-001" in artefact.content
+
+
+def test_render_report_accepts_optional_context_param(tmp_path: Any) -> None:
+    """Stufe-1.8 Inkrement 1 contract: the new ``context`` parameter is accepted.
+
+    The MPCOAdapter currently ignores ``context`` (full pass-through to
+    the renderer follows in Stufe-1.8 Inkrement 5/6). Until then, the
+    signature must still accept both ``context=None`` and an arbitrary
+    object, and produce the same interim report in both cases — same
+    output as the no-context call.
+    """
+    from ring2.core.session import SessionStateImpl
+
+    adapter = MPCOAdapter()
+    state = SessionStateImpl(
+        project_id="TEST-PROJ",
+        claim_id="TEST-001",
+        session_dir=tmp_path,
+    )
+
+    class _DummyContext:
+        """Stand-in for a future MPCORenderContext — empty marker satisfies the Protocol."""
+
+    baseline = adapter.render_report(state)
+    with_none = adapter.render_report(state, context=None)
+    with_object = adapter.render_report(state, context=_DummyContext())
+
+    # All three calls must succeed and produce equivalent content.
+    assert with_none.content == baseline.content
+    assert with_object.content == baseline.content

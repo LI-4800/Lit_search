@@ -15,6 +15,7 @@ from ring2.core.adapter_base import (
     InclusionCriteria,
     InclusionCriterion,
     PubMedRecord,
+    RenderContext,
     ReportArtefact,
     clear,
     get,
@@ -216,7 +217,7 @@ def _make_fake_adapter(adapter_name: str) -> type[Adapter]:
                 rationale="-",
             )
 
-        def render_report(self, state):
+        def render_report(self, state, context=None):
             return ReportArtefact(format="markdown", content="-")
 
     return FakeAdapter
@@ -272,7 +273,7 @@ def test_register_empty_name_raises(clean_registry: None) -> None:
         def appraise(self, r, q):  # pragma: no cover
             ...
 
-        def render_report(self, s):  # pragma: no cover
+        def render_report(self, s, context=None):  # pragma: no cover
             ...
 
     with pytest.raises(ValueError, match=r"empty \.name"):
@@ -289,3 +290,74 @@ def test_names_returns_sorted_tuple(clean_registry: None) -> None:
     register(_make_fake_adapter("Alpha"))
     register(_make_fake_adapter("Mu"))
     assert names() == ("Alpha", "Mu", "Zeta")
+
+
+# ---------------------------------------------------------------------------
+# RenderContext Protocol marker + Adapter.render_report(state, context=...) —
+# Stufe-1.8 Inkrement 1 (U-1.8-B / Weg B)
+# ---------------------------------------------------------------------------
+
+
+def test_render_context_is_runtime_checkable_protocol() -> None:
+    """``isinstance(obj, RenderContext)`` must work (decorated runtime_checkable)."""
+
+    class Anything:
+        pass
+
+    # Does not raise TypeError — Protocol is runtime-checkable.
+    assert isinstance(Anything(), RenderContext) is True
+
+
+def test_render_context_is_empty_marker() -> None:
+    """RenderContext has no required members — any object satisfies it.
+
+    The marker exists solely as a typed slot in the ``render_report``
+    signature; concrete adapters define their own context types
+    (e.g. ``MPCORenderContext``) without inheriting from this Protocol.
+    """
+
+    class TotallyUnrelated:
+        x = 1
+
+    class AnotherShape:
+        def foo(self) -> None: ...
+
+    assert isinstance(TotallyUnrelated(), RenderContext) is True
+    assert isinstance(AnotherShape(), RenderContext) is True
+    assert isinstance(object(), RenderContext) is True
+
+
+def test_adapter_render_report_default_context_is_none(clean_registry: None) -> None:
+    """Calling ``render_report(state)`` without context must work (default ``None``).
+
+    Backward-compat guarantee for Stufe-1.7 callers: the ABC's new
+    ``context`` parameter has a default of ``None``, so any code that
+    still calls the one-arg form continues to function.
+    """
+    cls = _make_fake_adapter("WithDefault")
+    adapter = cls()
+    # SessionState is a Protocol; the fake stub ignores it.
+    artefact = adapter.render_report(state=object())  # type: ignore[arg-type]
+    assert isinstance(artefact, ReportArtefact)
+    assert artefact.format == "markdown"
+
+
+def test_adapter_render_report_accepts_explicit_context(clean_registry: None) -> None:
+    """Adapters that ignore ``context`` must still accept it (Liskov).
+
+    The MPCO Stufe-1.7 renderer ignores the context; later increments
+    will consume it. The ABC signature with ``context: RenderContext |
+    None = None`` allows callers to pass any context object without
+    breaking adapters that don't care.
+    """
+
+    class _Ctx:
+        """Anything goes — RenderContext is an empty marker."""
+
+    cls = _make_fake_adapter("AcceptsCtx")
+    adapter = cls()
+    artefact = adapter.render_report(
+        state=object(),  # type: ignore[arg-type]
+        context=_Ctx(),
+    )
+    assert isinstance(artefact, ReportArtefact)

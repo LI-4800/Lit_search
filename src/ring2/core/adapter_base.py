@@ -193,6 +193,33 @@ class SessionState(Protocol):
     def claim_id(self) -> str: ...
 
 
+@runtime_checkable
+class RenderContext(Protocol):
+    """Adapter-specific render-time context.
+
+    Empty marker Protocol. Concrete adapters define their own context
+    types (e.g. ``MPCORenderContext``) carrying whatever data the
+    renderer needs beyond :class:`SessionState` — typically the
+    ``Question``/claim, persisted screening decisions, and the PRISMA
+    flow. The :meth:`Adapter.render_report` signature accepts
+    ``RenderContext | None``; adapters that don't need it simply
+    ignore the parameter.
+
+    This Protocol is intentionally empty — no methods or properties
+    are required. It exists as a typed marker so the ABC signature
+    can express "any adapter-specific context object" without
+    falling back to :data:`typing.Any`.
+
+    Stufe-1.8 ``U-1.8-B`` resolution (``Weg B``):
+        Rather than persisting claim/decisions/flow into the session
+        directory and re-reading them inside the renderer (which would
+        break the renderer's no-I/O contract), the orchestrator passes
+        them through as a typed ``RenderContext`` on the
+        ``render_report`` call. Backward-compatible default ``None``
+        preserves the Stufe-1.7 interim-report behaviour.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class ReportArtefact:
     """Result of :meth:`Adapter.render_report`.
@@ -247,8 +274,31 @@ class Adapter(ABC):
         """Decide include / exclude / review for one record."""
 
     @abstractmethod
-    def render_report(self, state: SessionState) -> ReportArtefact:
-        """Render the final report for one claim's session state."""
+    def render_report(
+        self,
+        state: SessionState,
+        context: RenderContext | None = None,
+    ) -> ReportArtefact:
+        """Render the final report for one claim's session state.
+
+        Args:
+            state: :class:`SessionState` Protocol instance — adapter-
+                agnostic per-claim state (project_id, claim_id, plus
+                whatever public attributes the concrete state exposes).
+            context: optional adapter-specific render context (e.g.
+                ``MPCORenderContext`` carrying claim, decisions, and
+                PRISMA flow). When ``None``, the renderer falls back
+                to the state-only interim report (Stufe-1.7 behaviour).
+
+        Returns:
+            A :class:`ReportArtefact` (markdown content or file path).
+
+        Stufe-1.8 ``U-1.8-B`` resolution (``Weg B``):
+            The ABC accepts ``context`` so the orchestrator can pass
+            claim/decisions/flow without persisting them to disk first.
+            Adapters that don't need a context ignore the parameter;
+            their override signature must still accept it (Liskov).
+        """
 
 
 # ---------------------------------------------------------------------------
