@@ -67,12 +67,13 @@ def test_all_eight_stub_lenses_registered() -> None:
     assert expected.issubset(registered)
 
 
-def test_no_meddev_a6_at_inkrement_6() -> None:
-    """meddev_a6 is added in Inkrement 7 — it is NOT registered yet.
+def test_meddev_a6_registered_at_inkrement_7() -> None:
+    """meddev_a6 is added in Inkrement 7 — it MUST be registered.
 
-    Regression guard: protects the Inkrement-6 boundary.
+    Regression guard: protects the Inkrement-7 boundary. If this fails,
+    the meddev_a6 side-effect import or @register_lens decorator broke.
     """
-    assert "meddev_a6" not in names()
+    assert "meddev_a6" in names()
 
 
 # ---------------------------------------------------------------------------

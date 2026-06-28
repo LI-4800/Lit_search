@@ -20,10 +20,10 @@ Public surface:
 
 Auto-registration:
     Importing this subpackage triggers side-effect imports of every
-    stub lens module below, populating the registry. After import,
-    :func:`names` returns the full inventory of registered lenses for
-    Stufe 1.8 Inkrement 6 (currently 8 stubs; Inkrement 7 adds
-    ``meddev_a6`` as the first fully-implemented lens).
+    lens module below, populating the registry. After import,
+    :func:`names` returns the full inventory of registered lenses —
+    after Inkrement 7 this is 8 stubs plus ``meddev_a6`` as the first
+    fully-implemented lens (9 total).
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from ring2.adapters.mpco.appraisal import (
 from ring2.adapters.mpco.appraisal import care_caseseries as _care_caseseries  # noqa: F401
 from ring2.adapters.mpco.appraisal import glp_oecd as _glp_oecd  # noqa: F401
 from ring2.adapters.mpco.appraisal import grade as _grade  # noqa: F401
+from ring2.adapters.mpco.appraisal import meddev_a6 as _meddev_a6  # noqa: F401
 from ring2.adapters.mpco.appraisal import (
     registry_authoritativeness as _registry_authoritativeness,  # noqa: F401
 )
