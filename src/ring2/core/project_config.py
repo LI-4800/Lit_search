@@ -68,6 +68,7 @@ __all__ = [
     "AppraisalConfig",
     "AppraisalLensSelection",
     "ProjectConfig",
+    "SearchConfig",
 ]
 
 
@@ -77,6 +78,37 @@ __all__ = [
 
 
 _FROZEN_CONFIG = ConfigDict(frozen=True, extra="forbid", str_strip_whitespace=True)
+
+
+class SearchConfig(BaseModel):
+    """Search-phase configuration block.
+
+    Optional under :class:`ProjectConfig`. When absent, the orchestrator
+    skips the search phase and expects pre-existing batch files in the
+    session directory (for resume / replay scenarios).
+
+    Attributes:
+        query: final PubMed search string. The orchestrator passes
+            this verbatim to
+            :meth:`~ring2.core.search.SearchOrchestrator.run`; query
+            construction / refinement is upstream.
+        batch_size: records per batch (default 10).
+        max_batches: hard ceiling on the number of batches retrieved.
+            ``None`` = no ceiling (default).
+    """
+
+    model_config = _FROZEN_CONFIG
+
+    query: str = Field(min_length=1)
+    batch_size: int = Field(default=10, gt=0)
+    max_batches: int | None = Field(default=None)
+
+    @field_validator("max_batches")
+    @classmethod
+    def _max_batches_positive_if_set(cls, v: int | None) -> int | None:
+        if v is not None and v <= 0:
+            raise ValueError("max_batches must be positive when set")
+        return v
 
 
 class AppraisalLensSelection(BaseModel):
@@ -190,6 +222,11 @@ class ProjectConfig(BaseModel):
             artefacts. Interpreted relative to the project-YAML's parent
             directory by the loader. Need not exist at validation time;
             it is created by the orchestrator if missing.
+        search: optional :class:`SearchConfig`. When set, the
+            orchestrator runs a PubMed search at the start of the
+            pipeline. When ``None``, the orchestrator skips the search
+            phase and expects pre-existing batch files in the session
+            directory (resume / replay scenarios).
     """
 
     model_config = _FROZEN_CONFIG
@@ -199,6 +236,7 @@ class ProjectConfig(BaseModel):
     claim_file: Path | None = None
     appraisal: AppraisalConfig
     output_dir: Path
+    search: SearchConfig | None = None
 
     @model_validator(mode="after")
     def _exactly_one_claim_source(self) -> Self:

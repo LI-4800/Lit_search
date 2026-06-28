@@ -280,3 +280,104 @@ class TestProjectConfigSchema:
         assert cfg.name == "CB-bov-01"
         assert cfg.claim_file == Path("claims/cb-bov-01.yaml")
         assert cfg.appraisal.lens_for(ClaimType.CLINICAL_PERFORMANCE) == "meddev_a6"
+
+
+# ---------------------------------------------------------------------------
+# SearchConfig — Inkrement 4
+# ---------------------------------------------------------------------------
+
+
+class TestSearchConfig:
+    def test_minimal_construction(self) -> None:
+        from ring2.core.project_config import SearchConfig
+
+        cfg = SearchConfig(query="collagen[Title/Abstract]")
+        assert cfg.query == "collagen[Title/Abstract]"
+        assert cfg.batch_size == 10
+        assert cfg.max_batches is None
+
+    def test_full_construction(self) -> None:
+        from ring2.core.project_config import SearchConfig
+
+        cfg = SearchConfig(query="q", batch_size=25, max_batches=5)
+        assert cfg.batch_size == 25
+        assert cfg.max_batches == 5
+
+    def test_empty_query_rejected(self) -> None:
+        from ring2.core.project_config import SearchConfig
+
+        with pytest.raises(ValidationError):
+            SearchConfig(query="")
+
+    def test_batch_size_must_be_positive(self) -> None:
+        from ring2.core.project_config import SearchConfig
+
+        with pytest.raises(ValidationError):
+            SearchConfig(query="q", batch_size=0)
+
+    def test_max_batches_must_be_positive_if_set(self) -> None:
+        from ring2.core.project_config import SearchConfig
+
+        with pytest.raises(ValidationError):
+            SearchConfig(query="q", max_batches=0)
+
+    def test_frozen(self) -> None:
+        from ring2.core.project_config import SearchConfig
+
+        cfg = SearchConfig(query="q")
+        with pytest.raises(ValidationError):
+            cfg.query = "other"  # type: ignore[misc]
+
+    def test_extra_forbid(self) -> None:
+        from ring2.core.project_config import SearchConfig
+
+        with pytest.raises(ValidationError):
+            SearchConfig(query="q", unexpected="boom")  # type: ignore[call-arg]
+
+
+class TestProjectConfigSearchField:
+    def test_search_defaults_to_none(self) -> None:
+        cfg = ProjectConfig(
+            name="x",
+            claim_file=Path("c.yaml"),
+            appraisal=_appraisal_default(),
+            output_dir=Path("out"),
+        )
+        assert cfg.search is None
+
+    def test_search_accepts_search_config(self) -> None:
+        from ring2.core.project_config import SearchConfig
+
+        cfg = ProjectConfig(
+            name="x",
+            claim_file=Path("c.yaml"),
+            appraisal=_appraisal_default(),
+            output_dir=Path("out"),
+            search=SearchConfig(query="q"),
+        )
+        assert cfg.search is not None
+        assert cfg.search.query == "q"
+
+    def test_search_from_dict(self) -> None:
+        cfg = ProjectConfig.model_validate(
+            {
+                "name": "x",
+                "claim_file": "c.yaml",
+                "appraisal": {
+                    "biochemistry_material_property": {"lens": "glp_oecd"},
+                    "safety_allergenicity": {"lens": "care_caseseries"},
+                    "clinical_performance": {"lens": "meddev_a6"},
+                    "historical_market_use": {"lens": "registry_authoritativeness"},
+                },
+                "output_dir": "out",
+                "search": {
+                    "query": "collagen AND bovine",
+                    "batch_size": 25,
+                    "max_batches": 3,
+                },
+            }
+        )
+        assert cfg.search is not None
+        assert cfg.search.query == "collagen AND bovine"
+        assert cfg.search.batch_size == 25
+        assert cfg.search.max_batches == 3
